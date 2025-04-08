@@ -81,11 +81,7 @@ if __name__ == "__main__":
     t_points = jnp.linspace(0.0, 10.0, 100)
     volume = 1.0
     
-    term = ODETerm(rxn)
-    solver = Tsit5()
-    saveat = SaveAt(ts=t_points)
-    
-    solution = diffeqsolve(term,solver,t0=t_points[0],t1=t_points[-1],dt0=0.01,y0=initial_conditions,args=true_params,saveat=saveat,max_steps=10000)
+    solution = diffeqsolve(ODETerm(rxn),Tsit5(),t0=t_points[0],t1=t_points[-1],dt0=0.01,y0=initial_conditions,args=true_params,saveat=SaveAt(ts=t_points),max_steps=10000)
     y_data_conc = solution.ys
     
     key = jax.random.PRNGKey(0)
@@ -153,36 +149,33 @@ if __name__ == "__main__":
     print(f"Final Loss: {final_loss}")
 
     #run simulation with optimized params
-    optimized_solution = diffeqsolve(term,solver,t0=t_points[0],t1=t_points[-1],dt0=0.01,y0=initial_conditions,args=optimized_params,saveat=saveat,max_steps=10000)
+    optimized_solution = diffeqsolve(ODETerm(rxn),Tsit5(),t0=t_points[0],t1=t_points[-1],dt0=0.01,y0=initial_conditions,args=optimized_params,saveat=SaveAt(ts=t_points),max_steps=10000)
     
-    file = open('true_params', 'wb')
+    #dump outputs
+    file = open('data/true_params', 'wb')
     pkl.dump(true_params, file)
     file.close()
 
-    file = open('opt_params', 'wb')
+    file = open('data/opt_params', 'wb')
     pkl.dump(optimized_params, file)
     file.close()
 
-    file = open('loss_history', 'wb')
+    file = open('data/loss_history', 'wb')
     pkl.dump(loss_history, file)
     file.close()
 
-    file=open('opt_data_ys', 'wb')
+    file=open('data/opt_data_ys', 'wb')
     pkl.dump(optimized_solution.ys, file)
     file.close()
 
-    file=open('true_data_ys', 'wb')
+    file=open('data/true_data_ys', 'wb')
     pkl.dump(solution.ys, file)
     file.close()
 
-    file=open('true_data_ts', 'wb')
+    file=open('data/true_data_ts', 'wb')
     pkl.dump(solution.ts, file)
     file.close()
 
-    file=open('opt_data_ts', 'wb')
+    file=open('data/opt_data_ts', 'wb')
     pkl.dump(optimized_solution.ts, file)
     file.close()
-
-    # Calculate relative error
-    rel_error = jnp.abs((optimized_params - true_params) / true_params) * 100
-    print(f"Relative Error (%): {rel_error}")
