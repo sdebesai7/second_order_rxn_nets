@@ -5,59 +5,27 @@ import matplotlib.pyplot as plt
 from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt
 import optax  
 import pickle as pkl
+from reaction_nets import rxn_net
+from functools import partial
 
 jax.config.update("jax_enable_x64", True)
 
-#rxn ode
-def rxn(t, y, args):
-    Ea1, Ba1, Fa1, Ea2, Ba2, Fa2, Ed1, Bd1, Fd1, Ed2, Bd2, Fd2, Fd2_in, Ek1, Bk1, Fk1, Ek2, Bk2, Fk2, Fa1_in, Fa2_in=args
-    
-    Fd1_in=0
-    Fd2_in=0
-    Fk1_in=0
-    Fk2_in=0
-
-    #rates
-    '''
-    a1=np.exp(Ea1-Ba1+0.5*Fa1+Fa1_in)
-    a2=np.exp(Ea2-Ba2+0.5*Fa2+Fa2_in)
-    d1=np.exp(Ed1-Bd1+0.5*Fd1+Fd1_in)
-    d2=np.exp(Ed2-Bd2+0.5*Fd2+Fd2_in)
-    k1=np.exp(Ek1-Bk1+0.5*Fk1+Fk1_in)
-    k2=np.exp(Ek2-Bk2+0.5*Fk2+Fk2_in)
-    ''' 
-
-    #testing 
-    a1=Ea1 + Fa1_in
-    a2=Ea2 + Fa2_in
-    d1=Ed1
-    d2=Ed2
-    k1=Ek1
-    k2=Ek2
-
-    W, WE1, W_star, W_star_E2, E1, E2 = y
-
-    dW_dt = -a1*W*E1 + d1*WE1 + k2*W_star_E2
-    dWE1_dt = a1*W*E1 - (d1+k1)*WE1
-    dW_star_dt = -a2*W_star*E2 + d2*W_star_E2 + k1*WE1
-    dW_star_E2_dt = a2*W_star*E2 - (d2+k2)*W_star_E2
-    dE1_dt = -dWE1_dt
-    dE2_dt = -dW_star_E2_dt
-   
-    return jnp.array([dW_dt, dWE1_dt, dW_star_dt, dW_star_E2_dt, dE1_dt, dE2_dt])
-
-@jax.jit
-def cross_entropy_loss(params, t_points, feature, label, initial_conditions, volume=1.0):
+@partial(jax.jit, static_argnames=['rxn'])
+def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions):
     #solve w/ current params + params that are fixed by the training example
-    all_params=jnp.concatenate([params, feature])
-    solution = diffeqsolve(ODETerm(rxn), Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
+
+    all_params=jnp.append(params, feature)
+
+    #solution = diffeqsolve(term, Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
+    solution = rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
+    
     y_pred_conc = solution.ys
     
     #convert to counts
-    y_pred_counts = y_pred_conc * volume
+    #y_pred_counts = y_pred_conc * volume
     
     #compute the loss 
-    y_pred_probs = y_pred_counts / (jnp.sum(y_pred_counts) + 1e-10)
+    y_pred_probs = y_pred_conc/(jnp.sum(y_pred_conc) + 1e-10) #y_pred_counts / (jnp.sum(y_pred_counts) + 1e-10)
     y_pred_probs = jnp.clip(y_pred_probs, 1e-10, 1.0 - 1e-10) #guarantee btwn 1 and 0
     y_pred_logits = jax.scipy.special.logit(y_pred_probs)
         
@@ -65,7 +33,7 @@ def cross_entropy_loss(params, t_points, feature, label, initial_conditions, vol
     
     return jnp.mean(jnp.array(loss))
 
-def optimize_ode_params(online_training, initial_params, t_points, y_features, y_labels, initial_conditions, learning_rate=0.01, num_epochs=10, batch_size=32, volume=1.0):
+def optimize_ode_params(rxn, online_training, initial_params, t_points, y_features, y_labels, initial_conditions, learning_rate=0.01, num_epochs=10, batch_size=32):
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(initial_params)
     params = initial_params
@@ -89,10 +57,11 @@ def optimize_ode_params(online_training, initial_params, t_points, y_features, y
                 total_iterations += 1
                 
                 feature = y_features[idx]
+                print(feature)
                 label = y_labels[idx]
                 
                 #loss + grad
-                loss_fxn = lambda p: cross_entropy_loss(p, t_points, feature, label, initial_conditions, volume)
+                loss_fxn = lambda p: cross_entropy_loss(p, rxn, t_points, feature, label, initial_conditions)
                 loss_value, grads = jax.value_and_grad(loss_fxn)(params)
                 epoch_loss += loss_value.item()
                 
@@ -117,7 +86,7 @@ def optimize_ode_params(online_training, initial_params, t_points, y_features, y
             
                 for feature, label in zip(batch_features, batch_labels):
                     #loss + gradients
-                    loss_fxn = lambda p: cross_entropy_loss(p, t_points, feature, label, initial_conditions, volume)
+                    loss_fxn = lambda p: cross_entropy_loss(p, rxn, t_points, feature, label, initial_conditions)
                     loss_value, sample_grads = jax.value_and_grad(loss_fxn)(params)
                     batch_loss += loss_value.item()
                 
@@ -146,7 +115,21 @@ def optimize_ode_params(online_training, initial_params, t_points, y_features, y
     
     return params, avg_epoch_loss, loss_history
 
+#make this generalize better
 def gen_training_data(type, n_samples):
+    if type == 'simple':
+        key = jax.random.PRNGKey(0)
+        key, subkey = jax.random.split(key)
+        #sample driving force uniformly
+        all_features=jax.random.uniform(subkey, (n_samples), minval=-20, maxval=20) 
+
+        #compute associated labels
+        b=(1 + jnp.tanh(-0.4*all_features - 2))*0.4 + 0.1
+        a=(1 + jnp.tanh(-0.6*all_features + 2))*0.45
+        c=1-a-b
+        
+        all_labels=jnp.array([a, b, c]).T
+
     if type == '4 gaussians':
         samples_per_gaussian = n_samples // 4  # Integer division
 
@@ -194,6 +177,7 @@ def gen_training_data(type, n_samples):
         all_labels = jnp.concatenate([label_dist_1, label_dist_2, label_dist_3, label_dist_4], axis=0)
         key, subkey = jax.random.split(key)
     
+    
     indices = jax.random.permutation(subkey, n_samples)
     shuffled_features = all_features[indices]
     shuffled_labels = all_labels[indices]
@@ -213,17 +197,16 @@ def gen_training_data(type, n_samples):
 
     return train_features, train_labels, val_features, val_labels
 
-def test(optimized_params, val_features, t_points, initial_conditions, volume=1.0):
+def test(rxn, optimized_params, val_features, t_points, initial_conditions):
     pred_labels = []
     final_states = []
     
     for feature in val_features:
         all_params = jnp.concatenate([optimized_params, feature])
-        solution = diffeqsolve(ODETerm(rxn), Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
-        
+        #solution = diffeqsolve(ODETerm(reaction_nets.goldbeter_kohsland), Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
+        solution=rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
         final_state = solution.ys[-1]
-        final_state_counts = final_state * volume
-        final_state_probs = final_state_counts / jnp.sum(final_state_counts)
+        final_state_probs = final_state / jnp.sum(final_state + 0.01)
         
         pred_labels.append(final_state_probs)
         final_states.append(solution.ys)
@@ -269,30 +252,49 @@ def save_data(train_features, train_labels, val_features, val_labels, optimized_
     file = open('data/loss_history', 'wb')
     pkl.dump(loss_history, file)
     file.close()
-    
-if __name__ == "__main__":
-    #generate training data + labels
-    n_samples = 1000
-    type='4 gaussians'
-    train_features, train_labels, val_features, val_labels = gen_training_data(type, n_samples)
 
-    #initial conditions: parameters to learn and system initial conditions. 
-    #concatenated with the 2D feature point to form a full set of parameters for the ODE
-    initial_params = jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
-    
-    # Initial concentrations of each species
-    initial_conditions = jnp.array([50.0, 0.0, 0.0, 0.0, 50.0, 50.0])
+#generalize this set up better? 
+def initialize_rxn_net(network_type):
     t_points = jnp.linspace(0.0, 10.0, 100)
-    volume = 1.0
     batch_size = 32  
     num_epochs = 1 #20  
     online_training=True
+   
+    rxn=rxn_net(network_type)
+    #choose reaction network
+    if network_type =='goldbeter_koshland':
+        #initial conditions: parameters to learn and system initial conditions. 
+        #2D feature are concatenated to form a full set of parameters for the ODE
+        initial_params = jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
     
+        # Initial concentrations of each species
+        initial_conditions = jnp.array([50.0, 0.0, 0.0, 0.0, 50.0, 50.0])
+    elif network_type == 'triangle':
+        initial_params=jnp.array([0.5, 0.5, 0.5])
+        initial_conditions = jnp.array([1, 2, 0.5])
+    
+    return rxn, initial_params, initial_conditions, t_points, batch_size, num_epochs, online_training 
+
+if __name__ == "__main__":
+    #generate training data + labels
+    network_type='triangle'#'goldbeter_koshland'
+    rxn, initial_params, initial_conditions, t_points, batch_size, num_epochs, online_training=initialize_rxn_net(network_type)
+
+    n_samples = 1000
+    type='simple'#'4 gaussians'
+    train_features, train_labels, val_features, val_labels = gen_training_data(type, n_samples)
+
     #optimize
-    optimized_params, final_loss, loss_history = optimize_ode_params(online_training, initial_params, t_points, train_features, train_labels, initial_conditions,learning_rate=0.01, num_epochs=num_epochs,batch_size=batch_size,volume=volume)
+    optimized_params, final_loss, loss_history = optimize_ode_params(rxn, online_training, initial_params, t_points, train_features, train_labels, initial_conditions,learning_rate=0.01, num_epochs=num_epochs,batch_size=batch_size)
     
+    print(optimized_params.shape)
+    print(final_loss)
+    print(len(loss_history))
+
+    '''
     #test + save 
-    pred_labels, final_states = test(optimized_params, val_features, t_points, initial_conditions, volume)
+    pred_labels, final_states = test(rxn, optimized_params, val_features, t_points, initial_conditions)
     accuracy = model_accuracy(val_labels, pred_labels)
     save_data(train_features, train_labels, val_features, val_labels, optimized_params, loss_history)
     print(f"Model accuracy: {accuracy:.4f}")
+    '''
