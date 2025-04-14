@@ -24,12 +24,12 @@ class rxn_net:
 
         #rates
         
-        a1=np.exp(Ea1-Ba1+0.5*Fa1+Fa1_in)
-        a2=np.exp(Ea2-Ba2+0.5*Fa2+Fa2_in)
-        d1=np.exp(Ed1-Bd1+0.5*Fd1+Fd1_in)
-        d2=np.exp(Ed2-Bd2+0.5*Fd2+Fd2_in)
-        k1=np.exp(Ek1-Bk1+0.5*Fk1+Fk1_in)
-        k2=np.exp(Ek2-Bk2+0.5*Fk2+Fk2_in)
+        a1=jnp.exp(Ea1-Ba1+0.5*Fa1+Fa1_in)
+        a2=jnp.exp(Ea2-Ba2+0.5*Fa2+Fa2_in)
+        d1=jnp.exp(Ed1-Bd1+0.5*Fd1+Fd1_in)
+        d2=jnp.exp(Ed2-Bd2+0.5*Fd2+Fd2_in)
+        k1=jnp.exp(Ek1-Bk1+0.5*Fk1+Fk1_in)
+        k2=jnp.exp(Ek2-Bk2+0.5*Fk2+Fk2_in)
         
         #testing 
         '''
@@ -56,7 +56,7 @@ class rxn_net:
     def triangle_topology_a(self, t, y, params):
         A, B, C=y
         E_k1, B_k1, F_k1, F_k1_in=params
-        k1=np.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
+        k1=jnp.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
         dAdt=-k1*A
         dBdt=-dAdt
         dCdt=0
@@ -70,7 +70,7 @@ class rxn_net:
 
         E_k1, B_k1, F_k1, F_k1_in=params
 
-        k1=np.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
+        k1=jnp.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
 
         dAdt=-k1*A*C
         dBdt=-dAdt
@@ -83,7 +83,7 @@ class rxn_net:
 
         E_k1, B_k1, F_k1, F_k1_in=params
 
-        k1=np.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
+        k1=jnp.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
 
         dAdt=-k1*A*C
         dBdt=-2*dAdt
