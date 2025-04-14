@@ -52,7 +52,20 @@ class rxn_net:
    
         return jnp.array([dW_dt, dWE1_dt, dW_star_dt, dW_star_E2_dt, dE1_dt, dE2_dt])
     
-    def triangle_toplogy(self, t, y, params):
+    #from Figure 13 of Cal's SI revisions
+    def triangle_topology_a(self, t, y, params):
+        A, B, C=y
+        E_k1, B_k1, F_k1, F_k1_in=params
+        k1=np.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
+        dAdt=-k1*A
+        dBdt=-dAdt
+        dCdt=0
+
+        E_k1, B_k1, F_k1, F_k1_in=params
+        
+        return jnp.array([dAdt, dBdt, dCdt])
+    
+    def triangle_topology_b(self, t, y, params):
         A, B, C=y
 
         E_k1, B_k1, F_k1, F_k1_in=params
@@ -64,6 +77,19 @@ class rxn_net:
         dCdt=0
 
         return jnp.array([dAdt, dBdt, dCdt])
+    
+    def triangle_topology_c(self, t, y, params):
+        A, B, C=y
+
+        E_k1, B_k1, F_k1, F_k1_in=params
+
+        k1=np.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
+
+        dAdt=-k1*A*C
+        dBdt=-2*dAdt
+        dCdt=dAdt
+
+        return jnp.array([dAdt, dBdt, dCdt])
 
     
     def integrate(self, solver, t_points, dt0, initial_conditions, args, max_steps):
@@ -73,10 +99,22 @@ class rxn_net:
                 return self.gbk_dynamics(t, y, args)
             
             term=ODETerm(wrapped_dynamics)
-        
-        elif self.net_type == 'triangle':
+
+        elif self.net_type == 'triangle_a':
             def wrapped_dynamics(t, y, args):
-                return self.triangle_topology(t, y, args)
+                return self.triangle_topology_a(t, y, args)
+
+            term=ODETerm(wrapped_dynamics)
+
+        elif self.net_type == 'triangle_b':
+            def wrapped_dynamics(t, y, args):
+                return self.triangle_topology_b(t, y, args)
+            
+            term=ODETerm(wrapped_dynamics)
+
+        elif self.net_type == 'triangle_c':
+            def wrapped_dynamics(t, y, args):
+                return self.triangle_topology_c(t, y, args)
             
             term=ODETerm(wrapped_dynamics)
 

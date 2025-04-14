@@ -117,7 +117,7 @@ def optimize_ode_params(rxn, online_training, initial_params, t_points, y_featur
 
 #make this generalize better
 def gen_training_data(type, n_samples):
-    if type == 'simple':
+    if type == 'simple_monotonic':
         key = jax.random.PRNGKey(0)
         key, subkey = jax.random.split(key)
         #sample driving force uniformly
@@ -127,10 +127,20 @@ def gen_training_data(type, n_samples):
         b=(1 + jnp.tanh(-0.4*all_features - 2))*0.4 + 0.1
         a=(1 + jnp.tanh(-0.6*all_features + 2))*0.45
         c=1-a-b
-        
+
+        all_labels=jnp.array([a, b, c]).T
+    elif type == 'simple_non_monotonic':
+        #features
+        all_features=jax.random.uniform(subkey, (n_samples), minval=-20, maxval=20) 
+
+        #labels
+        a=0.1*jnp.ones(n_samples) #constant
+        b=(1 + jnp.tanh(-0.4*all_features - 2))*0.45
+        c=(1 + jnp.tanh(-0.4*all_features + 2))*0.45
+
         all_labels=jnp.array([a, b, c]).T
 
-    if type == '4 gaussians':
+    elif type == '4 gaussians':
         samples_per_gaussian = n_samples // 4  # Integer division
 
         key = jax.random.PRNGKey(0)
@@ -175,9 +185,12 @@ def gen_training_data(type, n_samples):
         #concatenate + randomize
         all_features = jnp.concatenate([driving_dist_1, driving_dist_2, driving_dist_3, driving_dist_4], axis=0)
         all_labels = jnp.concatenate([label_dist_1, label_dist_2, label_dist_3, label_dist_4], axis=0)
-        key, subkey = jax.random.split(key)
-    
-    
+       
+    #check that features all sum to 1:
+    if jnp.all(jnp.sum(all_labels, axis=1) != 1.0):
+        raise Exception(f'probabilities in labels do not all sum to 1: \n {jnp.sum(all_labels, axis=1)}')
+
+    key, subkey = jax.random.split(key)
     indices = jax.random.permutation(subkey, n_samples)
     shuffled_features = all_features[indices]
     shuffled_labels = all_labels[indices]
@@ -269,7 +282,13 @@ def initialize_rxn_net(network_type):
     
         # Initial concentrations of each species
         initial_conditions = jnp.array([50.0, 0.0, 0.0, 0.0, 50.0, 50.0])
-    elif network_type == 'triangle':
+    elif network_type == 'triangle_a':
+        initial_params=jnp.array([0.5, 0.5, 0.5])
+        initial_conditions = jnp.array([1, 2, 0.5])
+    elif network_type == 'triangle_b':
+        initial_params=jnp.array([0.5, 0.5, 0.5])
+        initial_conditions = jnp.array([1, 2, 0.5])
+    elif network_type == 'triangle_c':
         initial_params=jnp.array([0.5, 0.5, 0.5])
         initial_conditions = jnp.array([1, 2, 0.5])
     
@@ -277,24 +296,18 @@ def initialize_rxn_net(network_type):
 
 if __name__ == "__main__":
     #generate training data + labels
-    network_type='triangle'#'goldbeter_koshland'
+    network_type='goldbeter_koshland'#'goldbeter_koshland'
     rxn, initial_params, initial_conditions, t_points, batch_size, num_epochs, online_training=initialize_rxn_net(network_type)
 
     n_samples = 1000
-    type='simple'#'4 gaussians'
+    type='simple_monotonic'#'4 gaussians'
     train_features, train_labels, val_features, val_labels = gen_training_data(type, n_samples)
 
     #optimize
     optimized_params, final_loss, loss_history = optimize_ode_params(rxn, online_training, initial_params, t_points, train_features, train_labels, initial_conditions,learning_rate=0.01, num_epochs=num_epochs,batch_size=batch_size)
-    
-    print(optimized_params.shape)
-    print(final_loss)
-    print(len(loss_history))
 
-    '''
     #test + save 
     pred_labels, final_states = test(rxn, optimized_params, val_features, t_points, initial_conditions)
     accuracy = model_accuracy(val_labels, pred_labels)
     save_data(train_features, train_labels, val_features, val_labels, optimized_params, loss_history)
     print(f"Model accuracy: {accuracy:.4f}")
-    '''
