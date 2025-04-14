@@ -125,7 +125,7 @@ def gen_training_data(type, n_samples):
 
         #compute associated labels
         b=(1 + jnp.tanh(-0.4*all_features - 2))*0.4 + 0.1
-        a=(1 + jnp.tanh(-0.6*all_features + 2))*0.45
+        a=(1 + jnp.tanh(0.6*all_features + 2))*0.45
         c=1-a-b
 
         all_labels=jnp.array([a, b, c]).T
@@ -136,7 +136,7 @@ def gen_training_data(type, n_samples):
         #labels
         a=0.1*jnp.ones(n_samples) #constant
         b=(1 + jnp.tanh(-0.4*all_features - 2))*0.45
-        c=(1 + jnp.tanh(-0.4*all_features + 2))*0.45
+        c=(1 + jnp.tanh(0.4*all_features + 2))*0.45
 
         all_labels=jnp.array([a, b, c]).T
 
@@ -215,7 +215,7 @@ def test(rxn, optimized_params, val_features, t_points, initial_conditions):
     final_states = []
     
     for feature in val_features:
-        all_params = jnp.concatenate([optimized_params, feature])
+        all_params = jnp.append(optimized_params, feature)
         #solution = diffeqsolve(ODETerm(reaction_nets.goldbeter_kohsland), Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
         solution=rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
         final_state = solution.ys[-1]
@@ -296,7 +296,7 @@ def initialize_rxn_net(network_type):
 
 if __name__ == "__main__":
     #generate training data + labels
-    network_type='goldbeter_koshland'#'goldbeter_koshland'
+    network_type='triangle_b'#'goldbeter_koshland'
     rxn, initial_params, initial_conditions, t_points, batch_size, num_epochs, online_training=initialize_rxn_net(network_type)
 
     n_samples = 1000
