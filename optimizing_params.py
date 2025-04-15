@@ -15,12 +15,14 @@ def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions
     #solve w/ current params + params that are fixed by the training example
 
     all_params=jnp.append(params, feature)
+    #jax.debug.print('params passed into solver: {all_params}', all_params=all_params)
 
     #solution = diffeqsolve(term, Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
     solution = rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
     
-    y_pred_conc = solution.ys
-    
+    y_pred_conc = solution.ys[-1] #compute loss based on equilibrated param solution
+    #jax.debug.print('solution to diff-eq w/ params: {y_pred_conc}', y_pred_conc=y_pred_conc)
+
     #convert to counts
     #y_pred_counts = y_pred_conc * volume
     
@@ -28,15 +30,17 @@ def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions
     y_pred_probs = y_pred_conc/(jnp.sum(y_pred_conc) + 1e-10) #y_pred_counts / (jnp.sum(y_pred_counts) + 1e-10)
     y_pred_probs = jnp.clip(y_pred_probs, 1e-10, 1.0 - 1e-10) #guarantee btwn 1 and 0
     y_pred_logits = jax.scipy.special.logit(y_pred_probs)
+
+    #jax.debug.print('logits for features: {y_pred_logits}', y_pred_logits=y_pred_logits)
         
     loss = optax.softmax_cross_entropy(logits=y_pred_logits,labels=label)
     
-    return jnp.mean(jnp.array(loss))
+    return loss
 
 def optimize_ode_params(rxn, online_training, initial_params, t_points, y_features, y_labels, initial_conditions, learning_rate=0.01, num_epochs=10, batch_size=32):
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(initial_params)
-    params = initial_params
+    params = initial_params.copy()
     loss_history = []
 
     n_samples = len(y_features)
@@ -57,17 +61,19 @@ def optimize_ode_params(rxn, online_training, initial_params, t_points, y_featur
                 total_iterations += 1
                 
                 feature = y_features[idx]
-                print(feature)
                 label = y_labels[idx]
-                
+                print(f'params before optimizing: {params}')
                 #loss + grad
                 loss_fxn = lambda p: cross_entropy_loss(p, rxn, t_points, feature, label, initial_conditions)
                 loss_value, grads = jax.value_and_grad(loss_fxn)(params)
+                print(f'loss value: {loss_value}')
+                print(f'grads: {grads}')
                 epoch_loss += loss_value.item()
                 
                 updates, opt_state = optimizer.update(grads, opt_state)
                 params = optax.apply_updates(params, updates)
                 params = jnp.maximum(params, 1e-5)  #no neg params
+                print(f'params after optimizing: {params} \n')
                 
                 if total_iterations % 10 == 0:
                     loss_history.append(loss_value.item())
@@ -279,9 +285,8 @@ def initialize_rxn_net(network_type):
         #initial conditions: parameters to learn and system initial conditions. 
         #2D feature are concatenated to form a full set of parameters for the ODE
         initial_params = jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
-    
         # Initial concentrations of each species
-        initial_conditions = jnp.array([50.0, 0.0, 0.0, 0.0, 50.0, 50.0])
+        initial_conditions = jnp.array([1, 0.0, 0.0, 0.0, 1, 1])
     elif network_type == 'triangle_a':
         initial_params=jnp.array([0.5, 0.5, 0.5])
         initial_conditions = jnp.array([1, 2, 0.5])

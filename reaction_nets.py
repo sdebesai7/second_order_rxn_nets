@@ -66,15 +66,20 @@ class rxn_net:
         return jnp.array([dAdt, dBdt, dCdt])
     
     def triangle_topology_b(self, t, y, params):
+        y=jnp.clip(y, 0)
         A, B, C=y
 
+        #jax.debug.print('A, B, C, {y}:', y=y)
+
         E_k1, B_k1, F_k1, F_k1_in=params
-
+        #jax.debug.print('params:{params}', params=params)
         k1=jnp.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
-
+        #jax.debug.print('k1:{k1}', k1=k1)
         dAdt=-k1*A*C
         dBdt=-dAdt
         dCdt=0
+
+        #jax.debug.print('change in concentration: {concs}', concs=jnp.array([dAdt, dBdt, dCdt]))
 
         return jnp.array([dAdt, dBdt, dCdt])
     
