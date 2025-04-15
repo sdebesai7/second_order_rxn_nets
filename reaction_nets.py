@@ -14,6 +14,7 @@ class rxn_net:
         self.net_type=net_type
 
     def gbk_dynamics(self, t, y, params):
+        y=jnp.clip(y, 0)
 
         Ea1, Ba1, Fa1, Ea2, Ba2, Fa2, Ed1, Bd1, Fd1, Ed2, Bd2, Fd2, Fd2_in, Ek1, Bk1, Fk1, Ek2, Bk2, Fk2, Fa1_in, Fa2_in=params
     
@@ -54,6 +55,7 @@ class rxn_net:
     
     #from Figure 13 of Cal's SI revisions
     def triangle_topology_a(self, t, y, params):
+        y=jnp.clip(y, 0)
         A, B, C=y
         E_k1, B_k1, F_k1, F_k1_in=params
         k1=jnp.exp(E_k1-B_k1+0.5*F_k1 + F_k1_in)
@@ -84,6 +86,7 @@ class rxn_net:
         return jnp.array([dAdt, dBdt, dCdt])
     
     def triangle_topology_c(self, t, y, params):
+        y=jnp.clip(y, 0)
         A, B, C=y
 
         E_k1, B_k1, F_k1, F_k1_in=params
@@ -96,7 +99,6 @@ class rxn_net:
 
         return jnp.array([dAdt, dBdt, dCdt])
 
-    
     def integrate(self, solver, t_points, dt0, initial_conditions, args, max_steps):
         if self.net_type == 'goldbeter_koshland':
 
