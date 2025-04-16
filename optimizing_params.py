@@ -17,21 +17,29 @@ def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions
     all_params=jnp.append(params, feature)
     #jax.debug.print('params passed into solver: {all_params}', all_params=all_params)
 
-    #solution = diffeqsolve(term, Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
     solution = rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
     
-    y_pred_conc = solution.ys[-1] #compute loss based on equilibrated param solution
-    #jax.debug.print('solution to diff-eq w/ params: {y_pred_conc}', y_pred_conc=y_pred_conc)
+    y_pred_conc = jnp.exp(solution.ys[-1]) #compute loss based on equilibrated param solution
+    jax.debug.print('k: {k}', k=jnp.exp(all_params[0] - all_params[1] + 0.5*all_params[2] + 0.5*all_params[3]))
+    jax.debug.print('solution to diff-eq w/ params: {y_pred_conc}', y_pred_conc=y_pred_conc)
 
     #convert to counts
     #y_pred_counts = y_pred_conc * volume
     
     #compute the loss 
     y_pred_probs = y_pred_conc/(jnp.sum(y_pred_conc) + 1e-10) #y_pred_counts / (jnp.sum(y_pred_counts) + 1e-10)
-    y_pred_probs = jnp.clip(y_pred_probs, 1e-10, 1.0 - 1e-10) #guarantee btwn 1 and 0
+    jax.debug.print('concentration --> prob: {y_pred_probs}', y_pred_probs=y_pred_probs)
+    y_pred_probs = jnp.clip(y_pred_probs, 1e-16, 1.0-1e-16) #guarantee btwn 1 and 0
+
+    #check that features all sum to 1:
+    jax.debug.print('sum of probs: {x}', x=jnp.sum(y_pred_probs))
+    #if jnp.sum(y_pred_probs) != 1.0:
+        #raise Exception(f'probabilities in labels do not all sum to 1: \n {jnp.sum(y_pred_probs)}')
+    
     y_pred_logits = jax.scipy.special.logit(y_pred_probs)
 
-    #jax.debug.print('logits for features: {y_pred_logits}', y_pred_logits=y_pred_logits)
+    jax.debug.print('logits for features: {y_pred_logits}', y_pred_logits=y_pred_logits)
+    jax.debug.print('label: {label}', label=label)
         
     loss = optax.softmax_cross_entropy(logits=y_pred_logits,labels=label)
     
@@ -63,6 +71,7 @@ def optimize_ode_params(rxn, online_training, initial_params, t_points, y_featur
                 feature = y_features[idx]
                 label = y_labels[idx]
                 print(f'params before optimizing: {params}')
+                print(f'feature: {feature}')
                 #loss + grad
                 loss_fxn = lambda p: cross_entropy_loss(p, rxn, t_points, feature, label, initial_conditions)
                 loss_value, grads = jax.value_and_grad(loss_fxn)(params)
@@ -77,6 +86,9 @@ def optimize_ode_params(rxn, online_training, initial_params, t_points, y_featur
                 
                 if total_iterations % 10 == 0:
                     loss_history.append(loss_value.item())
+                
+                if total_iterations == 7:
+                    break
         else:
             for batch_idx in range(n_batches):
                 total_iterations += 1
@@ -130,11 +142,12 @@ def gen_training_data(type, n_samples):
         all_features=jax.random.uniform(subkey, (n_samples), minval=-20, maxval=20) 
 
         #compute associated labels
-        b=(1 + jnp.tanh(-0.4*all_features - 2))*0.4 + 0.1
-        a=(1 + jnp.tanh(0.6*all_features + 2))*0.45
-        c=1-a-b
-
+        a=(1 + jnp.tanh(0.4*(all_features - 7)))*0.4 + 0.1
+        c=(1 + jnp.tanh(-0.4*(all_features - 3)))*0.45
+        b=1-a-c
+        #print(f'all_features: {all_features}')
         all_labels=jnp.array([a, b, c]).T
+
     elif type == 'simple_non_monotonic':
         #features
         all_features=jax.random.uniform(subkey, (n_samples), minval=-20, maxval=20) 
@@ -195,7 +208,9 @@ def gen_training_data(type, n_samples):
     #check that features all sum to 1:
     if jnp.all(jnp.sum(all_labels, axis=1) != 1.0):
         raise Exception(f'probabilities in labels do not all sum to 1: \n {jnp.sum(all_labels, axis=1)}')
-
+    if not jnp.all(all_labels > 0):
+        raise Exception(f'probabilities are not all greater than 0: \n {all_labels < 0}  \n {all_labels}')
+    
     key, subkey = jax.random.split(key)
     indices = jax.random.permutation(subkey, n_samples)
     shuffled_features = all_features[indices]
@@ -222,7 +237,6 @@ def test(rxn, optimized_params, val_features, t_points, initial_conditions):
     
     for feature in val_features:
         all_params = jnp.append(optimized_params, feature)
-        #solution = diffeqsolve(ODETerm(reaction_nets.goldbeter_kohsland), Tsit5(), t0=t_points[0], t1=t_points[-1], dt0=0.01, y0=initial_conditions, args=all_params, saveat=SaveAt(ts=t_points), max_steps=10000)
         solution=rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
         final_state = solution.ys[-1]
         final_state_probs = final_state / jnp.sum(final_state + 0.01)
@@ -243,7 +257,7 @@ def model_accuracy(val_labels, pred_labels, threshold=0.01):
     accuracy = correct / total
     return accuracy
 
-def save_data(train_features, train_labels, val_features, val_labels, optimized_params, loss_history):
+def save_data(train_features, train_labels, pred_labels, val_features, val_labels, optimized_params, loss_history):
     # Create data directory if it doesn't exist
     import os
     os.makedirs('data', exist_ok=True)
@@ -262,6 +276,10 @@ def save_data(train_features, train_labels, val_features, val_labels, optimized_
 
     file = open('data/val_labels', 'wb')
     pkl.dump(val_labels, file)
+    file.close()
+
+    file = open('data/pred_labels', 'wb')
+    pkl.dump(pred_labels, file)
     file.close()
 
     file = open('data/opt_params', 'wb')
@@ -292,7 +310,7 @@ def initialize_rxn_net(network_type):
         initial_conditions = jnp.array([1, 2, 0.5])
     elif network_type == 'triangle_b':
         initial_params=jnp.array([0.5, 0.5, 0.5])
-        initial_conditions = jnp.array([1, 2, 0.5])
+        initial_conditions = jnp.log(jnp.array([1.5, 2, 0.5]))
     elif network_type == 'triangle_c':
         initial_params=jnp.array([0.5, 0.5, 0.5])
         initial_conditions = jnp.array([1, 2, 0.5])
@@ -312,7 +330,9 @@ if __name__ == "__main__":
     optimized_params, final_loss, loss_history = optimize_ode_params(rxn, online_training, initial_params, t_points, train_features, train_labels, initial_conditions,learning_rate=0.01, num_epochs=num_epochs,batch_size=batch_size)
 
     #test + save 
+    '''
     pred_labels, final_states = test(rxn, optimized_params, val_features, t_points, initial_conditions)
     accuracy = model_accuracy(val_labels, pred_labels)
-    save_data(train_features, train_labels, val_features, val_labels, optimized_params, loss_history)
+    save_data(train_features, train_labels, val_features, val_labels, pred_labels, optimized_params, loss_history)
     print(f"Model accuracy: {accuracy:.4f}")
+    '''
