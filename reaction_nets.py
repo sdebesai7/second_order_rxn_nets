@@ -55,12 +55,11 @@ class rxn_net:
     
     #from Figure 13 of Cal's SI revisions
     def triangle_topology_a(self, t, y, params):
-        y=jnp.clip(y, 0)
-        A, B, C=y
+        A, B, C=jnp.exp(y)
         
         E_AB, B_AB, F_AB, E_BA, B_BA, F_BA,  E_AC, B_AC, F_AC,  E_CA, B_CA, F_CA, E_BC, B_BC, F_BC,  E_CB, B_CB, F_CB, F_BC_in,F_CB_in=params
 
-        F_AB_in, F_BA_in, F_AC_in,F_CA_in = 0
+        F_AB_in, F_BA_in, F_AC_in,F_CA_in = 0, 0, 0, 0
 
         #jax.debug.print('params:{params}', params=params)
         W_AB=jnp.exp(E_AB-B_AB+0.5*F_AB + 0.5*F_AB_in)
@@ -71,9 +70,9 @@ class rxn_net:
         W_CB=jnp.exp(E_CB-B_CB+0.5*F_CB + 0.5*F_CB_in)
 
         #mass action kinetics (for log(A), log(B), log(C))
-        dAdt=W_AB * B + W_AC * C - W_CA*A - W_BA * A
-        dBdt=W_BA * A + W_BC * C - W_AB*B - W_CB * B
-        dCdt=W_CA * A + W_CB * B - W_AC * C - W_BC * C
+        dAdt=W_AB*B + W_AC*C - W_CA*A - W_BA*A
+        dBdt=W_BA*A + W_BC*C - W_AB*B - W_CB*B
+        dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*C
 
         E_k1, B_k1, F_k1, F_k1_in=params
         
@@ -82,10 +81,10 @@ class rxn_net:
     def triangle_topology_b(self, t, y, params):
         #y=jnp.clip(y, 0)
         A, B, C=jnp.exp(y)
+        
+        E_AB, B_AB, F_AB, E_BA, B_BA, F_BA, E_AC, B_AC, F_AC, E_CA, B_CA, F_CA, E_BC, B_BC, F_BC, E_CB, B_CB, F_CB, F_BC_in=params
 
-        E_AB, B_AB, F_AB, E_BA, B_BA, F_BA,  E_AC, B_AC, F_AC,  E_CA, B_CA, F_CA, E_BC, B_BC, F_BC,  E_CB, B_CB, F_CB, F_BC_in=params
-
-        F_AB_in, F_BA_in, F_AC_in,F_CA_in = 0
+        F_AB_in, F_BA_in,F_AC_in, F_CA_in = 0, 0, 0, 0
         F_CB_in=-F_BC_in
 
         #jax.debug.print('params:{params}', params=params)
@@ -95,23 +94,24 @@ class rxn_net:
         W_CA=jnp.exp(E_CA-B_CA+0.5*F_CA + 0.5*F_CA_in)
         W_BC=jnp.exp(E_BC-B_BC+0.5*F_BC + 0.5*F_BC_in)
         W_CB=jnp.exp(E_CB-B_CB+0.5*F_CB + 0.5*F_CB_in)
+        #jax.debug.print('params:{params}', params=jnp.array([W_AB, W_BA, W_AC, W_CA, W_BC, W_CB]))
         #jax.debug.print('k1:{k1}', k1=k1)
 
         #mass action kinetics (for log(A), log(B), log(C))
-        dAdt=W_AB * B + W_AC * C - W_CA * A - W_BA * A * C
-        dBdt=W_BA * A * C + W_BC * C - W_AB * B - W_CB * B
-        dCdt=W_CA * A + W_CB * B - W_AC * C - W_BC * C
+        dAdt=W_AB*B + W_AC*C - W_CA*A - W_BA*A*C
+        dBdt=W_BA*A * C + W_BC*C - W_AB*B - W_CB*B
+        dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*C
 
-        #jax.debug.print('change in concentration: {concs}', concs=jnp.array([dAdt, dBdt, dCdt]))
+        #jax.debug.print('change in concentration: {concs}', concs=jnp.array([dAdt/A, dBdt/B, dCdt/C]))
+        #return jnp.array([dAdt/A, dBdt/B, dCdt/C])
         return jnp.array([dAdt/A, dBdt/B, dCdt/C])
     
     def triangle_topology_c(self, t, y, params):
-        y=jnp.clip(y, 0)
-        A, B, C=y
+        A, B, C=jnp.exp(y)
 
         E_AB, B_AB, F_AB, E_BA, B_BA, F_BA,  E_AC, B_AC, F_AC,  E_CA, B_CA, F_CA, E_BC, B_BC, F_BC,  E_CB, B_CB, F_CB, F_BC_in=params
 
-        F_AB_in, F_BA_in, F_AC_in,F_CA_in = 0
+        F_AB_in, F_BA_in, F_AC_in,F_CA_in = 0, 0, 0, 0
         F_CB_in=-F_BC_in
 
         #jax.debug.print('params:{params}', params=params)
@@ -123,9 +123,9 @@ class rxn_net:
         W_CB=jnp.exp(E_CB-B_CB+0.5*F_CB + 0.5*F_CB_in)
 
         #mass action kinetics (for log(A), log(B), log(C))
-        dAdt=W_AB * B + W_AC * C - W_CA * A - W_BA * A * C
-        dBdt=2*W_BA * A * C + W_BC * C - W_AB * B - W_CB * B
-        dCdt=W_CA * A + W_CB * B - W_AC * C - W_BC * A * C
+        dAdt=W_AB*B + W_AC*C - W_CA*A - W_BA*A*C
+        dBdt=2*W_BA*A *C+W_BC*C - W_AB*B - W_CB*B
+        dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*A*C
 
         return jnp.array([dAdt/A, dBdt/B, dCdt/C])
 
