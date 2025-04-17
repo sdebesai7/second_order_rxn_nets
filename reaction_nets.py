@@ -41,7 +41,6 @@ class rxn_net:
         k1=Ek1
         k2=Ek2
         '''
-
         W, WE1, W_star, W_star_E2, E1, E2 = y
 
         dW_dt = -a1*W*E1 + d1*WE1 + k2*W_star_E2
@@ -57,8 +56,8 @@ class rxn_net:
     def triangle_topology_a(self, t, y, params):
         A, B, C=jnp.exp(y)
         
-        E_AB, B_AB, F_AB, E_BA, B_BA, F_BA,  E_AC, B_AC, F_AC,  E_CA, B_CA, F_CA, E_BC, B_BC, F_BC,  E_CB, B_CB, F_CB, F_BC_in,F_CB_in=params
-
+        E_AB, B_AB, F_AB, E_BA, B_BA, F_BA, E_AC, B_AC, F_AC, E_CA, B_CA, F_CA, E_BC, B_BC, F_BC, E_CB, B_CB, F_CB, F_BC_in=params
+        F_CB_in=-F_BC_in
         F_AB_in, F_BA_in, F_AC_in,F_CA_in = 0, 0, 0, 0
 
         #jax.debug.print('params:{params}', params=params)
@@ -73,8 +72,6 @@ class rxn_net:
         dAdt=W_AB*B + W_AC*C - W_CA*A - W_BA*A
         dBdt=W_BA*A + W_BC*C - W_AB*B - W_CB*B
         dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*C
-
-        E_k1, B_k1, F_k1, F_k1_in=params
         
         return jnp.array([dAdt/A, dBdt/B, dCdt/C])
     #not log transformed dynamics
@@ -124,12 +121,12 @@ class rxn_net:
 
         #mass action kinetics (for log(A), log(B), log(C))
         dAdt=W_AB*B + W_AC*C - W_CA*A - W_BA*A*C
-        dBdt=2*W_BA*A *C+W_BC*C - W_AB*B - W_CB*B
-        dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*A*C
+        dBdt=2*W_BA*A*C+W_BC*C - W_AB*B - W_CB*B
+        dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*C-W_BA*A*C
 
         return jnp.array([dAdt/A, dBdt/B, dCdt/C])
 
-    def integrate(self, solver, t_points, dt0, initial_conditions, args, max_steps):
+    def integrate(self, solver, stepsize_controller, t_points, dt0, initial_conditions, args, max_steps):
         if self.net_type == 'goldbeter_koshland':
 
             def wrapped_dynamics(t, y, args):
@@ -155,6 +152,6 @@ class rxn_net:
             
             term=ODETerm(wrapped_dynamics)
 
-        solution = diffeqsolve(ODETerm(wrapped_dynamics), solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
 
         return solution

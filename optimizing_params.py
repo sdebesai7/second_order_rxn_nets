@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
-from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt
+from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, PIDController, Kvaerno3
 import optax  
 import pickle as pkl
 from reaction_nets import rxn_net
@@ -17,7 +17,7 @@ def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions
     all_params=jnp.append(params, feature)
     #jax.debug.print('params passed into solver: {all_params}', all_params=all_params)
 
-    solution = rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
+    solution = rxn.integrate(solver=Kvaerno3(), stepsize_controller=PIDController(0.005, 0.01), t_points=t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
     
     y_pred_conc = jnp.exp(solution.ys[-1]) #compute loss based on equilibrated param solution
     jax.debug.print('k: {k}', k=jnp.exp(all_params[0] - all_params[1] + 0.5*all_params[2] + 0.5*all_params[3]))
@@ -237,7 +237,7 @@ def test(rxn, optimized_params, val_features, t_points, initial_conditions):
     
     for feature in val_features:
         all_params = jnp.append(optimized_params, feature)
-        solution=rxn.integrate(Tsit5(), t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
+        solution=rxn.integrate(solver=Kvaerno3(), stepsize_controller=PIDController(0.005, 0.01), t_points=t_points, dt0=0.01, initial_conditions=initial_conditions, args=all_params, max_steps=10000)
         final_state = solution.ys[-1]
         final_state_probs = final_state / jnp.sum(final_state + 0.01)
         
