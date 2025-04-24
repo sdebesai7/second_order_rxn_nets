@@ -152,6 +152,8 @@ class rxn_net:
             
             term=ODETerm(wrapped_dynamics)
 
-        solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        #right now doing no step size controller
+        solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        #solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
 
         return solution
