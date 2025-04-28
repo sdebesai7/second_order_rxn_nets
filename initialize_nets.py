@@ -12,6 +12,7 @@ import scipy.optimize
 import os
 import equinox as eqx
 from jax import make_jaxpr
+from scipy.stats import norm
 
 jax.config.update("jax_enable_x64", True)
 
@@ -27,17 +28,21 @@ def initialize_rxn_net(network_type):
         initial_conditions = jnp.array([1, 0.0, 0.0, 0.0, 1, 1])
         true_params=None
     elif network_type == 'triangle_a':
-        initial_params=jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        initial_params=jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
         initial_conditions = jnp.log(jnp.array([0.3, 0.4, 0.3]))
-        true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
+        #E_A, E_B, E_C, B_AB, F_AB, B_BA, B_AC, F_AC, B_CA, B_BC, F_BC, B_CB
+        true_params=-1*jnp.array([0, 0, 0, np.log(1), 0, np.log(10), np.log(1), 0, np.log(0.1), np.log(0.05), 0, np.log(4)])
+        #true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
     elif network_type == 'triangle_b':
-        initial_params=jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        initial_params=jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
         initial_conditions = jnp.log(jnp.array([0.3, 0.4, 0.3]))
-        true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
+        true_params=-1*jnp.array([0, 0, 0, np.log(1), 0, np.log(10), np.log(1), 0, np.log(0.1), np.log(0.05), 0, np.log(4)])
+        #true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
     elif network_type == 'triangle_c':
-        initial_params=jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        initial_params=jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
         initial_conditions = jnp.log(jnp.array([0.3, 0.4, 0.3]))
-        true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
+        true_params=-1*jnp.array([0, 0, 0, np.log(1), 0, np.log(10), np.log(1), 0, np.log(0.1), np.log(0.05), 0, np.log(4)])
+        #true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
     
     return rxn, initial_params, initial_conditions, true_params
 
@@ -49,7 +54,7 @@ def profile(rxn, initial_params, initial_conditions, all_features, solver=Tsit5(
         solns.append(solution.ys[-1].copy())
     return jnp.array(solns)
 
-def gen_training_data(rxn, type, n_samples, true_params, initial_conditions, solver, stepsize_controller, t_points, dt0, max_steps):
+def gen_training_data(rxn, type, n_samples, true_params, initial_conditions=None, solver=None, stepsize_controller=None, t_points=None, dt0=None, max_steps=None):
     if type == 'simple_monotonic':
         key = jax.random.PRNGKey(0)
         key, subkey = jax.random.split(key)
@@ -59,15 +64,23 @@ def gen_training_data(rxn, type, n_samples, true_params, initial_conditions, sol
         #compute associated labels
         all_labels=profile(rxn, true_params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt0, max_steps)
         all_labels=jnp.exp(all_labels)
-        
-        '''
-        a=(1 + jnp.tanh(0.4*(all_features - 7)))*0.4 + 0.1
-        c=(1 + jnp.tanh(-0.4*(all_features - 3)))*0.45
-        b=1-a-c
-        all_labels=jnp.array([a, b, c]).T
-        '''
-        #print(f'all_features: {all_features}')
+    elif type == 'double_monotonic':
+        key = jax.random.PRNGKey(0)
+        key, subkey = jax.random.split(key)
 
+        all_features=jax.random.uniform(subkey, (n_samples), minval=-5, maxval=10) 
+        
+        weights=np.array([0.5, 0.5])
+        mean1, mean2, var1, var2=-1, 7, 1, 1
+
+        weight1, weight2=weights
+        gaussian1 = norm.pdf(all_features, mean1, np.sqrt(var1))
+        gaussian2 = norm.pdf(all_features, mean2, np.sqrt(var2))
+
+        mixture_profile = 3*(weight1 * gaussian1 + weight2 * gaussian2)
+        constant_profile=np.ones(all_features.shape[0])*0.2
+        diff=1-mixture_profile-constant_profile
+        all_labels=jnp.array([mixture_profile, constant_profile, diff]).T
     elif type == '4 gaussians':
         samples_per_gaussian = n_samples // 4  # Integer division
 
