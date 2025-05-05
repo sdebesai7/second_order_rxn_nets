@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, PIDController, Kvaerno3
 import optax  
 import pickle as pkl
-from reaction_nets import rxn_net, random_rxn_net
+from reaction_nets import random_rxn_net
+from rxn_nets_old import rxn_net
 from functools import partial
 import scipy.optimize
 import os
