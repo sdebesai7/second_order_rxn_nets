@@ -149,15 +149,15 @@ if __name__ == "__main__":
     #can make command line args 
     batch_size = 32  
     online_training=True
-    num_epochs =  4 #20 
+    num_epochs =  6 #20 
     t_points = jnp.linspace(0.0, 10.0, 200) 
     solver=Tsit5()
     stepsize_controller=PIDController(0.005, 0.01)
     dt0=0.001
     max_steps=10000
 
-    init_data_file='data/init_data/triangle_b_double_monotonic'
-    out_data_file='data/train/triangle_b_double_monotonic_training_data'
+    init_data_file='data/init_data/triangle_b_double_non_monotonic'
+    out_data_file='data/train/triangle_b_double_non_monotonic_training_data'
     #read in training and network info
     file = open(init_data_file, 'rb')
     init_data_dict=pkl.load(file)

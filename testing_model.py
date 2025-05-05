@@ -49,13 +49,13 @@ if __name__ == "__main__":
     dt0=0.001
     max_steps=10000
 
-    init_data_file='data/init_data/triangle_b'
+    init_data_file='data/init_data/triangle_b_double_non_monotonic'
     #read in training and network info
     file = open(init_data_file, 'rb')
     init_data_dict=pkl.load(file)
     file.close()
 
-    train_data_file='data/train/triangle_b_training_data'
+    train_data_file='data/train/triangle_b_double_non_monotonic_training_data'
     
     file = open(train_data_file, 'rb')
     train_data_dict=pkl.load(file)
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
     test_data={'val_features':val_features, 'val_labels':val_labels, 'pred_labels':pred_labels}
 
-    test_data_file='data/test/triangle_b_test_data'
+    test_data_file='data/test/triangle_b_double_non_monotonic_test_data'
     optimizing_params.save_data(test_data, test_data_file)
 
     print(f"Model accuracy: {accuracy:.4f}")

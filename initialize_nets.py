@@ -43,7 +43,27 @@ def initialize_rxn_net(network_type):
         initial_conditions = jnp.log(jnp.array([0.3, 0.4, 0.3]))
         true_params=-1*jnp.array([0, 0, 0, np.log(1), 0, np.log(10), np.log(1), 0, np.log(0.1), np.log(0.05), 0, np.log(4)])
         #true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
-    
+    elif network_type == 'random':
+        n=3
+        n_input_edges=1
+        adjacency_matrix = jnp.array(np.random.choice([-1, 0, 1], size=(n, n))) #0 means no edge, -1 is edge going from A to B, 1 is edge going from B to A
+        init_E_params = 0.5*jnp.ones(n)
+        init_B_params = jnp.ones((n, n)) * 0.5 
+        init_F_params = jnp.ones((n**2 - n) // 2) * 0.5
+        
+        '''
+        init_F_a_params = jnp.ones((n_input_edges,))*0.5
+        '''
+        idxs=jnp.argwhere(adjacency_matrix !=0)
+        F_a_idxs=idxs[np.random.choice(idxs.shape[0], n_input_edges, replace=False)]
+      
+        '''
+        true_E_params=
+        true_B_params=
+        true_F_params=
+        '''
+        initial_params=(init_E_params, init_B_params, init_F_params, F_a_idxs)
+        #true_params=(true_E_params, true_B_params, true_F_params)
     return rxn, initial_params, initial_conditions, true_params
 
 def profile(rxn, initial_params, initial_conditions, all_features, solver=Tsit5(), stepsize_controller=PIDController(0.005, 0.01), t_points=jnp.linspace(0.0, 10.0, 100), dt0=0.001, max_steps=10000):
@@ -64,7 +84,19 @@ def gen_training_data(rxn, type, n_samples, true_params, initial_conditions=None
         #compute associated labels
         all_labels=profile(rxn, true_params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt0, max_steps)
         all_labels=jnp.exp(all_labels)
-    elif type == 'double_monotonic':
+    elif type == 'double_non_monotonic':
+        key = jax.random.PRNGKey(0)
+        key, subkey = jax.random.split(key)
+
+        all_features=jax.random.uniform(subkey, (n_samples), minval=-5, maxval=10) 
+        mean1, var1=-1, 1
+        b=norm.pdf(all_features, mean1, np.sqrt(var1))
+        a=0.2*(1+np.tanh(all_features+4))
+        c=(1-norm.pdf(all_features, mean1, np.sqrt(var1))-0.2*(1+np.tanh(all_features+4)))
+    
+        all_labels=jnp.array([a, b, c]).T
+
+    elif type == 'quad_non_monotonic':
         key = jax.random.PRNGKey(0)
         key, subkey = jax.random.split(key)
 
