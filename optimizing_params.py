@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, PIDController, Kvaerno3
 import optax  
 import pickle as pkl
-from reaction_nets import rxn_net
+from reaction_nets import rxn_net, random_rxn_net
 from functools import partial
 import scipy.optimize
 import os
@@ -169,7 +169,10 @@ if __name__ == "__main__":
     print(f'init concentrations: {np.exp(initial_conditions)}')
     print(f'init params: {initial_params}')
     print(f'true params: {true_params}')
-    rxn=rxn_net(net_type)
+    #rxn=rxn_net(net_type)
+
+    
+    rxn=random_rxn_net(n, p, n_second_order, n_inputs, init_concentrations, True, A, second_order_edge_idxs, F_a_idxs)
 
     #optimize
     optimized_params, avg_epoch_losses, loss_history, grads_per_epoch_autodiff, optimized_params_history = optimize_ode_params(rxn, online_training, initial_params, t_points, train_features, train_labels, initial_conditions, solver, stepsize_controller, dt0, max_steps, learning_rate=0.01, num_epochs=num_epochs,batch_size=batch_size)

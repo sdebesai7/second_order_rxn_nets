@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, PIDController, Kvaerno3
 import optax  
 import pickle as pkl
-from reaction_nets import rxn_net
+from reaction_nets import rxn_net, random_rxn_net
 from functools import partial
 import scipy.optimize
 import os
@@ -43,27 +43,25 @@ def initialize_rxn_net(network_type):
         initial_conditions = jnp.log(jnp.array([0.3, 0.4, 0.3]))
         true_params=-1*jnp.array([0, 0, 0, np.log(1), 0, np.log(10), np.log(1), 0, np.log(0.1), np.log(0.05), 0, np.log(4)])
         #true_params=jnp.array([np.log(1), 0, 0, np.log(10), 0, 0, np.log(1), 0, 0, np.log(0.1), 0, 0, np.log(0.05), 0, 0, np.log(4), 0, 0])
-    elif network_type == 'random':
-        n=3
-        n_input_edges=1
-        adjacency_matrix = jnp.array(np.random.choice([-1, 0, 1], size=(n, n))) #0 means no edge, -1 is edge going from A to B, 1 is edge going from B to A
-        init_E_params = 0.5*jnp.ones(n)
-        init_B_params = jnp.ones((n, n)) * 0.5 
-        init_F_params = jnp.ones((n**2 - n) // 2) * 0.5
-        
-        '''
-        init_F_a_params = jnp.ones((n_input_edges,))*0.5
-        '''
-        idxs=jnp.argwhere(adjacency_matrix !=0)
-        F_a_idxs=idxs[np.random.choice(idxs.shape[0], n_input_edges, replace=False)]
-      
-        '''
-        true_E_params=
-        true_B_params=
-        true_F_params=
-        '''
-        initial_params=(init_E_params, init_B_params, init_F_params, F_a_idxs)
-        #true_params=(true_E_params, true_B_params, true_F_params)
+    elif network_type == 'random_test':
+        A=jnp.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]]) #adjacency matrix for triangle topology
+        F_a_idxs=jnp.array([[2, 1]]) #C to B
+        second_order_edge_idxs=jnp.array([[0, 1]]) #list of second order edges
+
+        n, p, n_second_order, n_inputs, initial_conditions=3,0.5, 1, 1, jnp.log(jnp.array([0.3, 0.4, 0.3]))
+        net = random_rxn_net(A, F_a_idxs, second_order_edge_idxs, n, p, n_second_order, n_inputs)
+
+        E=jnp.ones(net.n) * 0.5
+        B=jnp.ones(net.num_edges) * 0.5
+        F=jnp.ones(net.F_edge_idxs.shape[0]) * 0.5
+
+        initial_params=(E, B, F)
+
+        E_true=jnp.zeros(net.n)
+        B_true=jnp.log(jnp.array([1, 1, 10, 0.05, 0.1, 4]))
+        F_true=jnp.zeros(net.F_edge_idxs.shape[0])
+        true_params=(E_true, B_true, F_true)
+       
     return rxn, initial_params, initial_conditions, true_params
 
 def profile(rxn, initial_params, initial_conditions, all_features, solver=Tsit5(), stepsize_controller=PIDController(0.005, 0.01), t_points=jnp.linspace(0.0, 10.0, 100), dt0=0.001, max_steps=10000):
