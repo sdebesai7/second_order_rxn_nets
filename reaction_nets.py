@@ -22,7 +22,7 @@ class random_rxn_net:
         
         else:
             self.n=n #number of possible species / nodes 
-            self.G = nx.erdos_renyi_graph(self.n, p)
+            self.G = nx.erdos_renyi_graph(self.n, p) #look at uniform distribution over graphs with given set of nodes and edges 
             self.A=nx.adjacency_matrix(self.G) #adjacency matrix 
         
         self.y=init_concentrations
@@ -42,8 +42,7 @@ class random_rxn_net:
         if test:
             self.second_order_edges = jnp.array([[0, 1]]) #second order reactions
             self.second_order_edge_reactants = jnp.array([[0, 2]])
-            self.second_order_edge_prods = jnp.array([[1, 1]]) #jnp.array([[1, 2]])
-
+            self.second_order_edge_prods = jnp.array([[1, 2]]) #jnp.array([[1, 1]]) 
         else:
             #edges for inputs
             self.F_a_idxs= jnp.array(np.random.choice(self.F_edge_idxs,  size=n_inputs, replace=False)) #list of input edges
@@ -66,8 +65,9 @@ class random_rxn_net:
     
     #right now this does NOT assume that the second order edges are bidirectional
     def rxn_net_dynamics(self, t, y, params):
+        #jax.debug.print('log concentrations: {x}', x=y)
         y=jnp.exp(y)
-        #jax.debug.print('initial concentrations: {x}', x=y)
+        #jax.debug.print('concentrations: {x}', x=y)
         E, B, F, F_a_in=params
 
         B_params=jnp.zeros((self.n, self.n))
@@ -93,9 +93,10 @@ class random_rxn_net:
         #jax.debug.print('B_params: {x}', x=B_params)
         #jax.debug.print('F_params: {x}', x=F_params)
         #jax.debug.print('F_a_params: {x}', x=F_a_params)
+        #jax.debug.print('E_params: {x}', x=E)
 
         #reshape arrays accordingly to create rates matrix 
-        W=jnp.exp(E + B_params + F_params+F_a_params)
+        W=jnp.exp(E - B_params + 0.5*F_params+0.5*F_a_params)
         rows, cols=self.edge_idxs.T
 
         mask = jnp.zeros((self.n, self.n), dtype=bool)
@@ -119,9 +120,12 @@ class random_rxn_net:
 
         dydt = jnp.zeros(self.n)
         for i in range(self.n):
-            #jax.debug.print('i: {x}', x=i)
-            #jax.debug.print('first order terms (positive): {x} * {y}',  x=W_first_order[i], y=y)
-            #jax.debug.print('first order terms (negative): {x} * {y}', x=W_first_order[:, i], y=y[i])
+            '''
+            jax.debug.print('i: {x}', x=i)
+            jax.debug.print('first order terms (positive): {x} * {y} = {z}',  x=W_first_order[i], y=y, z=W_first_order[i] @ y)
+            jax.debug.print('first order terms (negative): {x} * {y} = {z}', x=W_first_order[:, i], y=y[i], z=W_first_order[:, i] * y[i])
+            jax.debug.print('total first order: {x}', x=W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
+            '''
             #jax.debug.print('first order contribution: {x}', x=dydt[i] + W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
             #contributions from first order 
             dydt=dydt.at[i].set(dydt[i] + W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
@@ -140,14 +144,7 @@ class random_rxn_net:
                     reactants=self.second_order_edge_reactants[e]
                     products=self.second_order_edge_prods[e]
 
-                    for j in reactants:
-                    
-                        #jax.debug.print('j: {x}', x=j)
-                        #skip over chaperones
-           
-                        #if jnp.sum((jnp.isin(j,products)).astype(jnp.int32)) > 0:
-                        skip=jnp.where(products == j, 1, 0).sum() > 0
-                        def process_reactant(inputs):
+                    def process_reactant(inputs):
                             j, dydt = inputs
                             term = 1
                             #c = -1 if i==j else 0
@@ -163,26 +160,19 @@ class random_rxn_net:
                                 #jax.debug.print('k: {x}', x=k)
                                 #jax.debug.print('y[k]: {x}', x=y[k])
                                 term=term*y[k] #multiply by the concentration of the other species in the reaction
-                        
-                            #jax.debug.print('second order rate term: {x}', x=W[idx_f, idx_i])  
-                            #jax.debug.print('second order: {x}', x=c*term*W[idx_f, idx_i])
+                            '''
+                            jax.debug.print('second order rate term: {x}', x=W[idx_f, idx_i])  
+                            jax.debug.print('second order: {x}', x=c*term*W[idx_f, idx_i])
+                            '''
                             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
 
                             return dydt
+                    #skip over chaperones
+                    def skip_reactant(inputs):
+                        j, dydt=inputs
+                        return dydt
 
-                        def skip_reactant(inputs):
-                            j, dydt=inputs
-                            return dydt
-                    
-                        dydt=jax.lax.cond(skip, skip_reactant, process_reactant, (j, dydt))
-                    
-                    #there is term for each product in the reaction if the reactant is the same as the species being considered
-                    for j in products:   
-               
-                        #jax.debug.print('j: {x}', x=j)    
-                        #if jnp.sum((jnp.isin(j,reactants)).astype(jnp.int32)) > 0:
-                        skip=jnp.where(reactants == j, 1, 0).sum() > 0
-                        def process_product(inputs):
+                    def process_product(inputs):
                             j, dydt = inputs
                             term = 1
                             #c = 1 if i==j else 0
@@ -204,15 +194,25 @@ class random_rxn_net:
 
                             return dydt
 
-                        def skip_product(inputs):
-                            j, dydt=inputs
-                            return dydt
+                    def skip_product(inputs):
+                        j, dydt=inputs
+                        return dydt
+
+                    for j in reactants:
+                        skip=jnp.where(products == j, 1, 0).sum() > 0
+                        dydt=jax.lax.cond(skip, skip_reactant, process_reactant, (j, dydt))
                     
+                    #there is term for each product in the reaction if the reactant is the same as the species being considered
+                    for j in products:   
+               
+                        #jax.debug.print('j: {x}', x=j)    
+                        #if jnp.sum((jnp.isin(j,reactants)).astype(jnp.int32)) > 0:
+                        skip=jnp.where(reactants == j, 1, 0).sum() > 0
                         dydt=jax.lax.cond(skip, skip_product, process_product, (j, dydt))
 
                     #jax.debug.print('updated dydt: {x}', x=dydt)
             #jax.debug.print('dydt:{x}',x=dydt)
-            #jax.debug.print('dlog(y)dt:{x}',x=dydt/y)
+        #jax.debug.print('dlog(y)dt:{x}\n',x=dydt/y)
                 
         return dydt / y
     

@@ -10,10 +10,6 @@ import networkx as nx
 class rxn_net:
     def __init__(self, net_type):
         self.net_type=net_type
-
-    #def random_net(self, t, y, init_E_params, init_B_params, init_F_params, F_a_idxs, init_F_a_params):
-        
-        #return dydt
         
     def gbk_dynamics(self, t, y, params):
         y=jnp.clip(y, 0)
@@ -48,6 +44,7 @@ class rxn_net:
     #log transformed dynamics
     def triangle_topology_a(self, t, y, params):
         A, B, C=jnp.exp(y)
+        print(A, B, C)
         
         E_A, E_B, E_C, B_AB, F_AB, B_BA, B_AC, F_AC, B_CA, B_BC, F_BC, B_CB, F_BC_in=params
         F_CB_in=-F_BC_in
@@ -65,9 +62,12 @@ class rxn_net:
         W_BC=jnp.exp(E_B-B_BC+0.5*F_BC + 0.5*F_BC_in)
         W_CB=jnp.exp(E_C-B_CB+0.5*F_CB + 0.5*F_CB_in)
 
+       
         #mass action kinetics (for log(A), log(B), log(C))
         dAdt=W_AB*B + W_AC*C - W_CA*A - W_BA*A
+       
         dBdt=W_BA*A + W_BC*C - W_AB*B - W_CB*B
+       
         dCdt=W_CA*A + W_CB*B - W_AC*C - W_BC*C
         
         return jnp.array([dAdt/A, dBdt/B, dCdt/C])
@@ -155,7 +155,7 @@ class rxn_net:
             term=ODETerm(wrapped_dynamics)
             
         #right now doing no step size controller
-        #solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
-        solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        #solution = diffeqsolve(ODETerm(wrapped_dynamics), solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
 
         return solution
