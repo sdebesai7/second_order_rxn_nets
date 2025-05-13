@@ -13,7 +13,7 @@ import networkx as nx
 
 jax.config.update("jax_enable_x64", True)
 class random_rxn_net:
-    def __init__(self, n, p, n_second_order, n_inputs, init_concentrations, test=False, A=None, second_order_edge_idxs=None, F_a_idxs=None):
+    def __init__(self, n, m, seed, n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=None, F_a_idxs=None):
 
         if test:
             self.A=A #adjacency matrix for triangle topology
@@ -22,10 +22,8 @@ class random_rxn_net:
         
         else:
             self.n=n #number of possible species / nodes 
-            self.G = nx.erdos_renyi_graph(self.n, p) #look at uniform distribution over graphs with given set of nodes and edges 
-            self.A=nx.adjacency_matrix(self.G) #adjacency matrix 
-        
-        self.y=init_concentrations
+            self.G = nx.gnm_random_graph(n, m, seed) #look at uniform distribution over graphs with given set of nodes and edges 
+            self.A=jnp.array(nx.adjacency_matrix(self.G).toarray()) #adjacency matrix 
         self.n=n
         self.edge_idxs=jnp.argwhere(self.A != 0)
         self.num_edges=self.edge_idxs.shape[0]
@@ -45,23 +43,29 @@ class random_rxn_net:
             self.second_order_edge_prods = jnp.array([[1, 2]]) #jnp.array([[1, 1]]) 
         else:
             #edges for inputs
-            self.F_a_idxs= jnp.array(np.random.choice(self.F_edge_idxs,  size=n_inputs, replace=False)) #list of input edges
+            idxs = np.random.choice(len(self.F_edge_idxs), size=n_inputs, replace=False)
+            self.F_a_idxs = jnp.array(self.F_edge_idxs[idxs])
             if self.n_second_order>0:
-                self.second_order_edges = jnp.array(np.random.choice(self.edge_idxs, size=n_second_order))#jnp.array(np.random.choice(self.F_edge_idxs, size=n_second_order))#randomly select some fraction of the edges that can have second order reactions 
+                idxs = np.random.choice(len(self.edge_idxs), size=n_second_order, replace=False)
+                self.second_order_edges = jnp.array(self.edge_idxs[idxs])
 
-                self.second_order_edge_prods = jnp.array((self.n_second, 2))
-                self.second_order_edge_reactants = jnp.array((self.n_second, 2))
+                self.second_order_edge_prods = jnp.zeros((self.n_second_order, 2), dtype=int)
+                self.second_order_edge_reactants = jnp.zeros((self.n_second_order, 2), dtype=int)
+                
                 for i, edge in enumerate(self.second_order_edges):
                     #map to some indices
-                    reactant2=np.random.randint(-1, self.n)
-                    prod2=np.random.randint(-1, self.n)
+                    key = jax.random.PRNGKey(0)
+                    key, subkey1, subkey2 = jax.random.split(key, 3)
+                    reactant2=jax.random.randint(key=subkey1, shape=(1,), minval=0, maxval=self.n-1, dtype=int)[0]
+                    key, subkey=jax.random.split(key)
+                    prod2=jax.random.randint(key=subkey2, shape=(1,), minval=0, maxval=self.n-1, dtype=int)[0]
 
                     #randomly select the second species in the second order reaction 
                     reactants=jnp.array([edge[0], reactant2])
                     prods=jnp.array([edge[1], prod2])
-                
-                    self.second_order_edge_reactants[i]=reactants.copy()
-                    self.second_order_edge_prods[i]=prods.copy()
+                   
+                    self.second_order_edge_reactants=self.second_order_edge_reactants.at[i].set(reactants.copy())
+                    self.second_order_edge_prods=self.second_order_edge_prods.at[i].set(prods.copy())
     
     #right now this does NOT assume that the second order edges are bidirectional
     def rxn_net_dynamics(self, t, y, params):
@@ -105,8 +109,6 @@ class random_rxn_net:
 
         W=W * mask
 
-        #jax.debug.print('W: {x}', x=W)
-
         #set second order edges to 0
         W_first_order=W.copy()
         
@@ -119,13 +121,8 @@ class random_rxn_net:
         #jax.debug.print('W_first_order: {x}', x=W_first_order)
 
         dydt = jnp.zeros(self.n)
-        for i in range(self.n):
-            '''
-            jax.debug.print('i: {x}', x=i)
-            jax.debug.print('first order terms (positive): {x} * {y} = {z}',  x=W_first_order[i], y=y, z=W_first_order[i] @ y)
-            jax.debug.print('first order terms (negative): {x} * {y} = {z}', x=W_first_order[:, i], y=y[i], z=W_first_order[:, i] * y[i])
-            jax.debug.print('total first order: {x}', x=W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
-            '''
+        for i in range(self.n):  
+            #jax.debug.print('i: {x}', x=i)
             #jax.debug.print('first order contribution: {x}', x=dydt[i] + W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
             #contributions from first order 
             dydt=dydt.at[i].set(dydt[i] + W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
@@ -140,30 +137,23 @@ class random_rxn_net:
                     c=0
                 
                     #there is a term for each reactant in the reaction if the reactant is the same as the species being considered 
-                    #for j in self.second_order_edge_idxs[tuple(edge.tolist())][0]:
+
                     reactants=self.second_order_edge_reactants[e]
                     products=self.second_order_edge_prods[e]
-
+  
                     def process_reactant(inputs):
                             j, dydt = inputs
                             term = 1
-                            #c = -1 if i==j else 0
-
+                        
                             def i_eq_j_branch():
                                 return -1
                             def i_not_eq_j_branch():
                                 return 0 
                         
                             c=jax.lax.cond(i==j, i_eq_j_branch, i_not_eq_j_branch)
-
+                            
                             for k in reactants:
-                                #jax.debug.print('k: {x}', x=k)
-                                #jax.debug.print('y[k]: {x}', x=y[k])
-                                term=term*y[k] #multiply by the concentration of the other species in the reaction
-                            '''
-                            jax.debug.print('second order rate term: {x}', x=W[idx_f, idx_i])  
-                            jax.debug.print('second order: {x}', x=c*term*W[idx_f, idx_i])
-                            '''
+                                term=term*y[k] #multiply by the concentration of the other species in the reaction 
                             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
 
                             return dydt
@@ -184,12 +174,8 @@ class random_rxn_net:
                             c=jax.lax.cond(i==j, i_eq_j_branch, i_not_eq_j_branch)
 
                             for k in reactants:
-                                #jax.debug.print('k: {x}', x=k)
-                                #jax.debug.print('y[k]: {x}', x=y[k])
                                 term=term*y[k] #multiply by the concentration of the other species in the reaction
-                        
-                            #jax.debug.print('second order rate term: {x}', x=W[idx_f, idx_i])  
-                            #jax.debug.print('second order: {x}', x=c*term*W[idx_f, idx_i])
+                            
                             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
 
                             return dydt
@@ -197,7 +183,7 @@ class random_rxn_net:
                     def skip_product(inputs):
                         j, dydt=inputs
                         return dydt
-
+             
                     for j in reactants:
                         skip=jnp.where(products == j, 1, 0).sum() > 0
                         dydt=jax.lax.cond(skip, skip_reactant, process_reactant, (j, dydt))
@@ -221,8 +207,8 @@ class random_rxn_net:
                 return self.rxn_net_dynamics(t, y, args)
         term=ODETerm(wrapped_dynamics)
 
-        #solution = diffeqsolve(term, solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
-        solution = diffeqsolve(term, solver=solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        solution = diffeqsolve(term, solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        #solution = diffeqsolve(term, solver=solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
         return solution
 
 
