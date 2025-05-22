@@ -1,9 +1,9 @@
 #code to define reaction networks
+from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
-from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, Kvaerno3
 import optax  
 import networkx as nx
 import pickle as pkl
@@ -15,6 +15,7 @@ import optax
 #integrate function numerically solves given parameters
 
 jax.config.update("jax_enable_x64", True)
+
 class random_rxn_net:
     def __init__(self, n, m, seed, n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=None, F_a_idxs=None):
         key = jax.random.PRNGKey(seed)
@@ -82,6 +83,7 @@ class random_rxn_net:
                 self.second_order_edge_reactants=jnp.array([[0, 0]])
                 self.second_order_edge_prods=jnp.array([[0, 0]])
     #right now this does NOT assume that the second order edges are bidirectional
+    @partial(jax.jit, static_argnames=['self'])
     def rxn_net_dynamics(self, t, y, params):
         #jax.debug.print('log concentrations: {x}', x=y)
         y=jnp.exp(y)
@@ -245,12 +247,13 @@ class random_rxn_net:
             #jax.debug.print('dy[i]dt:{x}',x=dydt)      
         return dydt / y
     
+    @partial(jax.jit, static_argnames=['self', 'solver', 'stepsize_controller', 'dt0', 'max_steps'])
     def integrate(self, solver, stepsize_controller, t_points, dt0, initial_conditions, args, max_steps):
         def wrapped_dynamics(t, y, args):
                 return self.rxn_net_dynamics(t, y, args)
         term=ODETerm(wrapped_dynamics)
 
-        solution = diffeqsolve(term, solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
+        solution = diffeqsolve(term, solver=solver, stepsize_controller=stepsize_controller, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), throw=False, max_steps=max_steps)
         #solution = diffeqsolve(term, solver=solver, t0=t_points[0], t1=t_points[-1], dt0=dt0, y0=initial_conditions, args=args, saveat=SaveAt(ts=t_points), max_steps=max_steps)
         return solution
 
