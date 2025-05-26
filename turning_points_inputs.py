@@ -1,0 +1,175 @@
+#testing reaction network code
+import jax
+import jax.numpy as jnp
+import numpy as np
+from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, Kvaerno3, PIDController
+import optax  
+import pickle as pkl
+#from reaction_nets import rxn_net
+from functools import partial
+import random
+#from modified_reaction_nets import random_rxn_net
+from reaction_nets import random_rxn_net
+import scipy
+from scipy.signal import savgol_filter
+from jax.experimental import host_callback as hcb
+import gc
+import os
+import sys
+import argparse
+
+os.environ['JAX_DEBUG_PRINT_ENABLED'] = '1'
+os.environ['JAX_LOG_LEVEL'] = 'DEBUG'
+
+def profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps):
+    E, B, F=params
+    solns=[]
+    for F_a in all_features:
+        sol_F_a=rxn.integrate(solver=solver, stepsize_controller=stepsize_controller, t_points=t_points, dt0=dt, initial_conditions=initial_conditions, args=(E, B, F, F_a,), max_steps=max_steps) 
+        solns.append(sol_F_a.ys[-1].copy())
+    return jnp.exp(jnp.array(solns))
+
+def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
+    
+    if len(data) < window_length:
+        window_length = max(min(len(data) - 2, 7), 3)
+    window_length = window_length if window_length % 2 == 1 else window_length - 1
+    polyorder = min(polyorder, window_length - 2)
+    
+    # Apply Savitzky-Golay filter to smooth the data
+    data = savgol_filter(data, window_length, polyorder)
+    min_prominence=0.1*np.max(data)
+    
+    # Find peaks based on prominence criterion
+    prominence_peaks, _ = scipy.signal.find_peaks(data, plateau_size=1, prominence=min_prominence)
+    prominence_troughs, _ = scipy.signal.find_peaks(-data, plateau_size=1, prominence=min_prominence)
+    
+    # Find peaks based on width criterion
+    width_peaks, _ = scipy.signal.find_peaks(data, plateau_size=1, width=min_width)
+    width_troughs, _ = scipy.signal.find_peaks(-data, plateau_size=1, width=min_width)
+
+    # Combine unique peaks and troughs from both criteria
+    all_peaks = np.unique(np.concatenate((prominence_peaks, width_peaks)))
+    all_troughs = np.unique(np.concatenate((prominence_troughs, width_troughs)))
+
+    return all_peaks.shape[0] + all_troughs.shape[0]
+
+
+def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge_idxs, initial_conditions, all_features, solver, stepsize_controller, t_points, dt,max_steps, output_file, turning_points_file):
+    with open(fname, "rb") as f:
+        params_rand = pkl.load(f)
+    f.close()
+
+    n_profiles=5#len(params_rand)
+    jax.debug.print('num profs: {x}', x=n_profiles)
+    #dist_tps=jnp.zeros(n_profiles * n)
+    #solns_all=jnp.zeros((n_profiles, all_features.shape[0], n))
+    counter=0
+
+    with open(output_file, 'w') as profile_file, open(turning_points_file, 'w') as tp_file:
+        for i, params in enumerate(params_rand[0:n_profiles]):
+            if i%50 == 0:
+                jax.debug.print('seed {i}', i=int(seeds[i]))
+                sys.stderr.flush()
+                sys.stdout.flush()
+            rxn=random_rxn_net(n, m, int(seeds[i]), n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=second_order_edge_idxs, F_a_idxs=None)
+            solns=profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps)
+            
+            profile_data_flat = solns.flatten()  # Shape: (n_features * n_species,)
+            profile_line = f"{i}," + ",".join(map(str, profile_data_flat)) + "\n"
+            profile_file.write(profile_line)
+            
+            #solns_all = solns_all.at[i].set(solns.copy())
+            turning_points_for_profile = []
+            for j, species_prof in enumerate(solns.T):
+                n_tps=count_turning_points(species_prof)
+                turning_points_for_profile.append(n_tps) 
+                #dist_tps=dist_tps.at[counter].set(n_tps)
+                counter+=1
+
+            tp_line = f"{i}," + ",".join(map(str, turning_points_for_profile)) + "\n"
+            tp_file.write(tp_line)
+    jax.debug.print('integrated all profiles for this set of edges')
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
+    #return dist_tps, solns_all
+
+def main():
+# Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run turning points analysis with different parameters')
+    parser.add_argument('--n_second_order_edges', type=str, default="[[0,0]]",
+                       help='Second order edges as 2D list string, e.g., "[[0,1],[4,1]]"')
+    #parser.add_argument('--n_profiles', type=int, default=6, help='Number of profiles to process')
+    #parser.add_argument('--chunk_size', type=int, default=20, help='Chunk size for processing')
+    parser.add_argument('--task_id', type=int, default=0, help='Task ID for job array')
+    #parser.add_argument('--output_suffix', type=str, default='', help='Suffix for output files')
+
+    args = parser.parse_args()
+
+    try:
+        import ast
+        edges_list = ast.literal_eval(args.n_second_order_edges)
+        second_order_edges = jnp.array(edges_list)
+
+        # Calculate n_second_order from the edges (for compatibility)
+        if len(edges_list) == 1 and edges_list[0] == [0, 0]:
+            n_second_order = 0  # Special case for dummy edge
+        else:
+            n_second_order = len(edges_list)
+
+    except (ValueError, SyntaxError) as e:
+        print(f"Error parsing n_second_order_edges: {e}")
+        print(f"Input was: {args.n_second_order_edges}")
+        sys.exit(1)
+
+    n = 6
+    m = n * (n - 1) // 2
+    seeds = np.arange(1, 4001)
+    seeds = seeds.reshape(4, 1000)
+    initial_conditions = jnp.log(jnp.array([1/6, 1/6, 1/6, 1/6, 1/6, 1/6]))
+    all_features = jnp.linspace(-20, 20, 100)
+    t_points = jnp.linspace(0, 20, 200)
+    solver = Kvaerno3()
+    stepsize_controller = PIDController(
+        rtol=1e-6,
+        atol=1e-9,
+        dtmin=1e-11,
+        dtmax=1e-1
+    )
+    dt = 0.1
+
+    max_steps = 1000#0000
+
+    n_inputs = 1
+
+    params_file=f'data/turning_points/params_all_N0'
+    jax.debug.print('n_second_order: {x}', x=n_second_order)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    jax.debug.print('second order edges: {x}', x=second_order_edges)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    seed_set = seeds[min(args.task_id, len(seeds)-1)]
+
+    suffix =f"task{args.task_id}"
+    dist_filename = f'data/turning_points/N{n}_M{m}_S{n_second_order}_distributions_{suffix}.txt'
+    profiles_filename = f'data/turning_points/N{n}_M{m}_S{n_second_order}_profiles_{suffix}.txt'
+
+    gen_profiles(params_file, n, m, seed_set, n_second_order, n_inputs, second_order_edges, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps, profiles_filename, dist_filename)
+    # Save results
+    #with open(dist_filename, 'wb') as f:
+    #    pkl.dump(dist, f)
+
+    #if solns_all is not None:
+    #    with open(profiles_filename, 'wb') as f:
+    #        pkl.dump(solns_all, f)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+

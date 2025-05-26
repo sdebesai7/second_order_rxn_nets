@@ -12,8 +12,6 @@ import random
 #from modified_reaction_nets import random_rxn_net
 from reaction_nets import random_rxn_net
 from rxn_nets_old import rxn_net
-from flax import serialization
-import whittaker_smooth
 import scipy
 from scipy.signal import savgol_filter
 
@@ -23,6 +21,7 @@ def profile(rxn, params, initial_conditions, all_features, solver, stepsize_cont
     for F_a in all_features:
         sol_F_a=rxn.integrate(solver=solver, stepsize_controller=stepsize_controller, t_points=t_points, dt0=dt, initial_conditions=initial_conditions, args=(E, B, F, F_a,), max_steps=max_steps) 
         solns.append(sol_F_a.ys[-1].copy())
+        #jax.debug.print('{x}', x=sol_F_a.result)
     return jnp.exp(jnp.array(solns))
 
 def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
@@ -55,13 +54,14 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
         params_rand = pkl.load(f)
     f.close()
 
-    n_profiles=len(params_rand)
+    n_profiles=6#len(params_rand)
     dist_tps=jnp.zeros(n_profiles * n)
     solns_all=jnp.zeros((n_profiles, all_features.shape[0], n))
     counter=0
     for i, params in enumerate(params_rand[0:n_profiles]):
         #gen reaction net
         #seed=int(seeds[i])
+        jax.debug.print('seed {i}', i=int(seeds[i]))
        
         rxn=random_rxn_net(n, m, int(seeds[i]), n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=second_order_edge_idxs, F_a_idxs=None)
         solns=profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps)
@@ -69,7 +69,7 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
 
         for j, species_prof in enumerate(solns.T):
             n_tps=count_turning_points(species_prof)
-            dist_tps.at[counter].set(n_tps)
+            dist_tps=dist_tps.at[counter].set(n_tps)
             counter+=1
 
     return dist_tps, solns_all
