@@ -30,7 +30,7 @@ class random_rxn_net:
             self.A=jnp.array(nx.adjacency_matrix(self.G).toarray()) #adjacency matrix 
         self.n=n
         self.edge_idxs=jnp.argwhere(self.A != 0)
-        self.num_edges=self.edge_idxs.shape[0]
+        #self.num_edges=self.edge_idxs.shape[0]
         self.n_second_order=n_second_order
 
         #get idxs for all non-zero edges in the upper triangle of the adjacency matrix
@@ -47,12 +47,14 @@ class random_rxn_net:
         if test:
             self.second_order_edges = jnp.array([[0, 1]]) #second order reactions
             self.second_order_edge_reactants = jnp.array([[0, 2]])
-            self.second_order_edge_prods = jnp.array([[1, 2]]) #jnp.array([[1, 1]]) 
+            self.second_order_edge_prods = jnp.array([[1, 2]]) #jnp.array([[1, 1]])  
         else:
             #edges for inputs
             key, subkey = jax.random.split(key)
             idxs = jax.random.choice(subkey, jnp.arange(len(self.F_a_edge_idxs)), shape=(n_inputs, ), replace=False)
             self.F_a_idxs = jnp.array(self.F_a_edge_idxs[idxs])
+
+            #need to eliminate reactions that are like A + B --> B + B
             if self.n_second_order>0:
                 if second_order_edge_idxs == None:
                     key, subkey = jax.random.split(key)
@@ -66,7 +68,6 @@ class random_rxn_net:
                 
                 for i, edge in enumerate(self.second_order_edges):
                     #map to some indices
-                    #will always generate the same second order edges right now
                     
                     key, subkey1, subkey2 = jax.random.split(key, 3)
                     reactant2=jax.random.randint(key=subkey1, shape=(1,), minval=0, maxval=self.n-1, dtype=int)[0]
@@ -78,6 +79,7 @@ class random_rxn_net:
 
                     self.second_order_edge_reactants=self.second_order_edge_reactants.at[i].set(reactants.copy())
                     self.second_order_edge_prods=self.second_order_edge_prods.at[i].set(prods.copy())
+
             else:
                 self.second_order_edges=jnp.array([[0, 0]])
                 self.second_order_edge_reactants=jnp.array([[0, 0]])
@@ -116,11 +118,14 @@ class random_rxn_net:
         #jax.debug.print('E_params: {x}', x=E)
 
         #reshape arrays accordingly to create rates matrix 
-        W=jnp.exp(E - B_params + 0.5*F_params+0.5*F_a_params)
+        W=jnp.exp(E.reshape(-1, 1) - B_params + 0.5*F_params+0.5*F_a_params)
+        #jax.debug.print('E-B: {x}', x=E.reshape(-1, 1) - B_params)
         rows, cols=self.edge_idxs.T
         mask = jnp.zeros((self.n, self.n), dtype=bool)
         mask = mask.at[rows, cols].set(True)
         W=W * mask
+
+        #jax.debug.print('W: {x}', x=W)
         
         #compute W first order 
         def compute_W_first_order(inputs):
@@ -145,54 +150,62 @@ class random_rxn_net:
         comp_W_cond=self.n_second_order > 0 
         W_first_order=jax.lax.cond(comp_W_cond, compute_W_first_order, skip_W_first_order, (self.second_order_edges, W_first_order))
 
+        #find all the second order rates 
+        
         #jax.debug.print('W_first_order: {x}', x=W_first_order)
         #jax.debug.print('W: {x}', x=W_first_order)
         
         #functions to process second order reactions
         def process_reactant(inputs):
-            i, j, reactants, idx_i, idx_f, dydt = inputs
+            i, j, products, reactants, idx_i, idx_f, dydt = inputs
             term = 1
-                        
-            def i_eq_j_branch():
+            
+            #if it's not a chaperone and we want to add the second order contribution, the multiplier is -1 because this is a reactant
+            def not_chaperone_branch():
                 return -1
-            def i_not_eq_j_branch():
+            #if this is a chaperone then our multplier is 0
+            def chaperone_branch():
                 return 0 
-                        
-            c=jax.lax.cond(i==j, i_eq_j_branch, i_not_eq_j_branch)
+
+            not_chaperone=(jnp.where(reactants == j, 1, 0).sum() == 2) | (~jnp.any(jnp.isin(reactants, products))) | ((jnp.where(reactants == j, 1, 0).sum() == 1) & (jnp.where(products == j, 1, 0).sum() ==0))
+            c=jax.lax.cond(not_chaperone,not_chaperone_branch, chaperone_branch) 
                             
             for k in reactants:
                 term=term*y[k] #multiply by the concentration of the other species in the reaction 
             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
-            #jax.debug.print('second order prod contribution: {x}*{y}*{z}={u}', x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
-            return dydt
-            
-        #skip over chaperones
-        def skip_reactant(inputs):
-            i, j, reactants, idx_i, idx_f, dydt=inputs
-            return dydt
+          
+            #jax.debug.print('second order reactant contribution: {x}*{y}*{z}={u}', x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
+            return dydt 
             
         def process_product(inputs):
-            i, j, reactants, idx_i, idx_f, dydt = inputs
+            i, j, products, reactants, idx_i, idx_f, dydt = inputs
             term = 1
-                            
-            def i_eq_j_branch():
+               
+            def not_chaperone_branch():
                 return 1
-            def i_not_eq_j_branch():
+            def chaperone_branch():
                 return 0 
-                        
-            c=jax.lax.cond(i==j, i_eq_j_branch, i_not_eq_j_branch)
+                            
+            #if all the reactants or species are distinct
+            #or if the reaction is of the forms: k + l -->  2j or j + k --> 2j 
+            #or k + l --> j + l
+            #we process 
+            not_chaperone=(jnp.where(products == j, 1, 0).sum() == 2) | (~jnp.any(jnp.isin(reactants, products))) | ((jnp.where(products == j, 1, 0).sum() == 1) & (jnp.where(reactants == j, 1, 0).sum() ==0))
+           
+            c=jax.lax.cond(not_chaperone,not_chaperone_branch, chaperone_branch) 
 
             for k in reactants:
                 term=term*y[k] #multiply by the concentration of the other species in the reaction
                             
             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
-
-            #jax.debug.print('second order reactant contribution: {x}*{y}*{z}={u}', x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
+            
+            #jax.debug.print('second order product contribution: {x}*{y}*{z}={u}', x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
 
             return dydt
-            
-        def skip_product(inputs):
-            i, j, reactants, idx_i, idx_f, dydt=inputs
+        
+        #branch executed if the species considered does not have a second order term 
+        def skip_species(inputs):
+            i, j, products, reactants, idx_i, idx_f, dydt=inputs
             return dydt
             
         def second_order_rxns(inputs):
@@ -204,25 +217,22 @@ class random_rxn_net:
                 idx_i=edge[0]
                 idx_f=edge[1]
               
-                #there is a term for each reactant in the reaction if the reactant is the same as the species being considered 
-
                 reactants=second_order_edge_reactants[e]
                 products=second_order_edge_prods[e]
 
-                #jax.debug.print('second order reactants {x}:', x=reactants)
-                #jax.debug.print('second order prods {x}:', x=products)
-                
                 #iterate through reactants 
                 for j in reactants:
-                    skip=jnp.where(products == j, 1, 0).sum() > 0
-                    #if the reactant is also a product then it's a chaperone, in which case we skip it
-                    #otherwise, we compute a term 
-                    dydt=jax.lax.cond(skip, skip_reactant, process_reactant, (i, j, reactants, idx_i, idx_f, dydt))
-                    
+                    #if the species we are considering is a reactant in the second order term, we process it, otherwise we skip it 
+                    process=i == j
+                    dydt=jax.lax.cond(process, process_reactant, skip_species, (i, j, products, reactants, idx_i, idx_f, dydt))
+           
                 #there is term for each product in the reaction if the reactant is the same as the species being considered
                 for j in products:   
-                    skip=jnp.where(reactants == j, 1, 0).sum() > 0
-                    dydt=jax.lax.cond(skip, skip_product, process_product, (i, j, reactants, idx_i, idx_f, dydt))
+                    #skip if it's a chaperone
+                    
+                    process=i == j
+                    dydt=jax.lax.cond(process, process_product, skip_species,(i, j, products, reactants, idx_i, idx_f, dydt))
+
                 #jax.debug.print('updated dydt: {x}', x=dydt)
                 #jax.debug.print('dydt:{x}',x=dydt)
             return dydt
@@ -231,7 +241,7 @@ class random_rxn_net:
             i, second_order_edges, second_order_edge_reactants, second_order_edge_prods, dydt=inputs
             return dydt
         
-        #iterate through each species and compute dydt
+        #iterate through each species and compute dydt for that species
         dydt = jnp.zeros(self.n)
         for i in range(self.n):  
             #jax.debug.print('i: {x}', x=i)
@@ -239,9 +249,11 @@ class random_rxn_net:
             #jax.debug.print('negative first order: {x}', x=jnp.sum(W_first_order[:, i] * y[i]))
             #jax.debug.print('first order contribution: {x}', x=dydt[i] + W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i]))
 
-            #contributions from first order 
+            #contributions from first order for that species
             dydt=dydt.at[i].set(dydt[i] + W_first_order[i] @ y - jnp.sum(W_first_order[:, i] * y[i])) #first order reactions
             process_second_order=self.n_second_order > 0
+
+            #get the second order contribution to that species dynamics
             dydt=jax.lax.cond(process_second_order, second_order_rxns, skip_second_order, (i, self.second_order_edges, self.second_order_edge_reactants, self.second_order_edge_prods, dydt)) #second order reactions
 
             #jax.debug.print('dy[i]dt:{x}',x=dydt)      
