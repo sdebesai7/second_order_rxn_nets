@@ -46,15 +46,14 @@ class random_rxn_net:
         #setting up inputs and second order edges
         if test:
             self.second_order_edges = jnp.array([[0, 1]]) #second order reactions
-            self.second_order_edge_reactants = jnp.array([[0, 2]])
-            self.second_order_edge_prods = jnp.array([[1, 2]]) #jnp.array([[1, 1]])  
+            self.second_order_edge_reactants = jnp.array([[0, 2]]) #jnp.array([[1, 0]]) #
+            self.second_order_edge_prods =  jnp.array([[1, 1]])   #jnp.array([[1, 2]]) #jnp.array([[0, 0]]) 
         else:
             #edges for inputs
             key, subkey = jax.random.split(key)
             idxs = jax.random.choice(subkey, jnp.arange(len(self.F_a_edge_idxs)), shape=(n_inputs, ), replace=False)
             self.F_a_idxs = jnp.array(self.F_a_edge_idxs[idxs])
 
-            #need to eliminate reactions that are like A + B --> B + B
             if self.n_second_order>0:
                 if second_order_edge_idxs == None:
                     key, subkey = jax.random.split(key)
@@ -166,15 +165,20 @@ class random_rxn_net:
             #if this is a chaperone then our multplier is 0
             def chaperone_branch():
                 return 0 
-
-            not_chaperone=(jnp.where(reactants == j, 1, 0).sum() == 2) | (~jnp.any(jnp.isin(reactants, products))) | ((jnp.where(reactants == j, 1, 0).sum() == 1) & (jnp.where(products == j, 1, 0).sum() ==0))
+            
+            #if all the reactants or species are distinct
+            #or if the reaction is of the forms: 2j --> k + l  or 2j --> j + k 
+            #or j + l --> k + l 
+            #or j + k --> 2j 
+            not_chaperone= ((jnp.where(reactants == j, 1, 0).sum() == 1) & (jnp.where(products == j, 1, 0).sum() == 2)) | (jnp.where(reactants == j, 1, 0).sum() == 2) | (~jnp.any(jnp.isin(reactants, products))) | ((jnp.where(reactants == j, 1, 0).sum() == 1) & (jnp.where(products == j, 1, 0).sum() ==0))
             c=jax.lax.cond(not_chaperone,not_chaperone_branch, chaperone_branch) 
+            #jax.debug.print('reactant species {i}/{j} is not a chaperone ({x}) for reactants {r} and products {p} and {y}', i=i, j=j, x=not_chaperone, r=reactants, p=products, y=jnp.where(reactants == j, 1, 0).sum())
                             
             for k in reactants:
                 term=term*y[k] #multiply by the concentration of the other species in the reaction 
             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
           
-            #jax.debug.print('second order reactant contribution: {x}*{y}*{z}={u}', x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
+            #jax.debug.print('second order reactant contribution {i}: {x}*{y}*{z}={u}', i=i, x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
             return dydt 
             
         def process_product(inputs):
@@ -189,17 +193,18 @@ class random_rxn_net:
             #if all the reactants or species are distinct
             #or if the reaction is of the forms: k + l -->  2j or j + k --> 2j 
             #or k + l --> j + l
+            #or 2j --> j + k
             #we process 
-            not_chaperone=(jnp.where(products == j, 1, 0).sum() == 2) | (~jnp.any(jnp.isin(reactants, products))) | ((jnp.where(products == j, 1, 0).sum() == 1) & (jnp.where(reactants == j, 1, 0).sum() ==0))
+            not_chaperone=((jnp.where(reactants == j, 1, 0).sum() == 2) & (jnp.where(products == j, 1, 0).sum() == 1)) | (jnp.where(products == j, 1, 0).sum() == 2) | (~jnp.any(jnp.isin(reactants, products))) | ((jnp.where(products == j, 1, 0).sum() == 1) & (jnp.where(reactants == j, 1, 0).sum() ==0))
            
             c=jax.lax.cond(not_chaperone,not_chaperone_branch, chaperone_branch) 
-
+            #jax.debug.print('product species {i}/{j} is not a chaperone ({x}) for reactants {r} and products {p} and {y}', i=i, j=j, x=not_chaperone, r=reactants, p=products, y=jnp.where(products == j, 1, 0).sum())
             for k in reactants:
                 term=term*y[k] #multiply by the concentration of the other species in the reaction
                             
             dydt=dydt.at[i].set(dydt[i] + c*term*W[idx_f, idx_i])
             
-            #jax.debug.print('second order product contribution: {x}*{y}*{z}={u}', x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
+            #jax.debug.print('second order product contribution {i}: {x}*{y}*{z}={u}', i=i, x=c, y=term, z=W[idx_f, idx_i], u=c*term*W[idx_f, idx_i])
 
             return dydt
         

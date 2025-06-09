@@ -12,11 +12,12 @@ import random
 from reaction_nets import random_rxn_net
 import scipy
 from scipy.signal import savgol_filter
-from jax.experimental import host_callback as hcb
 import gc
 import os
 import sys
 import argparse
+#from memory_profiler import profile
+import jax.profiler
 
 os.environ['JAX_DEBUG_PRINT_ENABLED'] = '1'
 os.environ['JAX_LOG_LEVEL'] = 'DEBUG'
@@ -30,7 +31,6 @@ def profile(rxn, params, initial_conditions, all_features, solver, stepsize_cont
     return jnp.exp(jnp.array(solns))
 
 def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
-    
     if len(data) < window_length:
         window_length = max(min(len(data) - 2, 7), 3)
     window_length = window_length if window_length % 2 == 1 else window_length - 1
@@ -41,19 +41,48 @@ def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
     min_prominence=0.1*np.max(data)
     
     # Find peaks based on prominence criterion
-    prominence_peaks, _ = scipy.signal.find_peaks(data, plateau_size=1, prominence=min_prominence)
-    prominence_troughs, _ = scipy.signal.find_peaks(-data, plateau_size=1, prominence=min_prominence)
+    prominence_peaks, _ = scipy.signal.find_peaks(data, prominence=min_prominence)
+    prominence_troughs, _ = scipy.signal.find_peaks(-data, prominence=min_prominence)
     
     # Find peaks based on width criterion
-    width_peaks, _ = scipy.signal.find_peaks(data, plateau_size=1, width=min_width)
-    width_troughs, _ = scipy.signal.find_peaks(-data, plateau_size=1, width=min_width)
+    width_peaks, _ = scipy.signal.find_peaks(data, width=min_width)
+    width_troughs, _ = scipy.signal.find_peaks(-data, width=min_width)
 
     # Combine unique peaks and troughs from both criteria
     all_peaks = np.unique(np.concatenate((prominence_peaks, width_peaks)))
     all_troughs = np.unique(np.concatenate((prominence_troughs, width_troughs)))
 
-    return all_peaks.shape[0] + all_troughs.shape[0]
+    bad_points = ~np.isfinite(data)
+    
+    # Expand the mask to include neighbors of bad points
+    bad_points_expanded = bad_points.copy()
+    
+    # Mark neighbors of bad points as bad too
+    for i in range(len(bad_points)):
+        if bad_points[i]:
+            # Mark left neighbor as bad
+            if i > 0:
+                bad_points_expanded[i-1] = True
+            # Mark right neighbor as bad  
+            if i < len(bad_points) - 1:
+                bad_points_expanded[i+1] = True
+    
+    # FILTER PEAKS AND TROUGHS
+    # Remove peaks that are at bad points or next to bad points
+    valid_peaks = all_peaks[~bad_points_expanded[all_peaks]]
+    valid_troughs = all_troughs[~bad_points_expanded[all_troughs]]
 
+    finite_peaks = np.isfinite(data[valid_peaks])  # boolean array, True for finite values
+    count_finite_peaks = np.sum(finite_peaks)
+
+    # Count finite values in all_troughs
+    finite_troughs = np.isfinite(data[valid_troughs])
+    count_finite_troughs = np.sum(finite_troughs)
+
+    #    Total finite values in both arrays
+    total_finite = count_finite_peaks + count_finite_troughs
+
+    return total_finite, prominence_peaks, prominence_troughs, width_peaks, width_troughs
 
 def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge_idxs, initial_conditions, all_features, solver, stepsize_controller, t_points, dt,max_steps, output_file, turning_points_file):
     with open(fname, "rb") as f:
@@ -61,7 +90,7 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
     f.close()
 
     n_profiles=5#len(params_rand)
-    jax.debug.print('num profs: {x}', x=n_profiles)
+    #jax.debug.print('num profs: {x}', x=n_profiles)
     #dist_tps=jnp.zeros(n_profiles * n)
     #solns_all=jnp.zeros((n_profiles, all_features.shape[0], n))
     counter=0
@@ -69,7 +98,8 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
     with open(output_file, 'w') as profile_file, open(turning_points_file, 'w') as tp_file:
         for i, params in enumerate(params_rand[0:n_profiles]):
             if i%50 == 0:
-                jax.debug.print('seed {i}', i=int(seeds[i]))
+                #jax.debug.print('seed {i}', i=int(seeds[i]))
+                print(f'seed {i}')
                 sys.stderr.flush()
                 sys.stdout.flush()
             rxn=random_rxn_net(n, m, int(seeds[i]), n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=second_order_edge_idxs, F_a_idxs=None)
@@ -89,7 +119,7 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
 
             tp_line = f"{i}," + ",".join(map(str, turning_points_for_profile)) + "\n"
             tp_file.write(tp_line)
-    jax.debug.print('integrated all profiles for this set of edges')
+    print('integrated all profiles for this set of edges')
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -158,6 +188,8 @@ def main():
     profiles_filename = f'data/turning_points/N{n}_M{m}_S{n_second_order}_profiles_{suffix}.txt'
 
     gen_profiles(params_file, n, m, seed_set, n_second_order, n_inputs, second_order_edges, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps, profiles_filename, dist_filename)
+    jax.profiler.save_device_memory_profile("memory.prof")
+    print('profiler done')
     # Save results
     #with open(dist_filename, 'wb') as f:
     #    pkl.dump(dist, f)
