@@ -1,0 +1,7 @@
+seed,species,prominence_peaks,prominence_troughs,width_peaks,width_troughs
+20100,0,[],[],[],[]
+20100,1,[],[],[],[12]
+20100,2,[],[],[],[]
+20100,3,[],[],[],[11]
+20100,4,[],[],[],[]
+20100,5,[],[],[],[]

@@ -16,6 +16,20 @@ import initialize_nets
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_debug_nans", True)
 
+# Function to compute loss between labels and computed concentrations using kld loss
+# inputs:
+#   rxn (reaction_network object): reaction network
+#   params (jndarray(float64)): parameters to optimize
+#   solver (diffrax solver): solver to use for integration
+#   stepsize_controller (diffrax stepsize controller): stepsize controller to use for integration
+#   dt0 (float): initial time step size
+#   max_steps (int): maximum number of steps to take in the integration
+#   t_points (jndarray(float64)): time points to evaluate the solution at
+#   feature (jndarray(float64)): feature vector to append to params
+#   label (jndarray(float64)): target concentration profile to compare against
+#   initial_conditions (jndarray(float64)): initial concentrations
+# outputs:
+#   loss (float): KLD loss between the predicted and target concentration profiles
 @partial(jax.jit, static_argnames=['rxn', 'solver', 'stepsize_controller', 'dt0', 'max_steps'])
 def kld_loss(params, rxn, solver, stepsize_controller, dt0, max_steps, t_points, feature, label, initial_conditions):
     all_params=jnp.append(params, feature)
@@ -23,6 +37,8 @@ def kld_loss(params, rxn, solver, stepsize_controller, dt0, max_steps, t_points,
     loss = optax.losses.kl_divergence_with_log_targets(solution.ys[-1], jnp.log(label))
     return loss
 
+# Function to generate concentration profile as a function of F_a for a single reaction network with given parameters using kld loss
+# needs to be debugged 
 @partial(jax.jit, static_argnames=['rxn'])
 def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions):
     #solve w/ current params + params that are fixed by the training example
@@ -35,6 +51,23 @@ def cross_entropy_loss(params, rxn, t_points, feature, label, initial_conditions
     loss = optax.softmax_cross_entropy(logits=y_pred_logits,labels=label)
     return loss
 
+# Function to optimize parameters of a reaction network using autodiff
+# batch training has not been tested
+# inputs:
+#   rxn (reaction_network object): reaction network
+#   online_training (bool): whether to use online training or batch training
+#   initial_params (jndarray(float64)): initial parameters to optimize
+#   t_points (jndarray(float64)): time points to evaluate the solution at
+#   y_features (jndarray(float64)): feature vectors for each training example
+#   y_labels (jndarray(float64)): target concentration profiles for each training example
+#   initial_conditions (jndarray(float64)): initial concentrations
+#   solver (diffrax solver): solver to use for integration
+#   stepsize_controller (diffrax stepsize controller): stepsize controller to use for integration
+#   dt0 (float): initial time step size
+#   max_steps (int): maximum number of steps to take in the integration
+#   learning_rate (float): learning rate for the optimizer
+#   num_epochs (int): number of epochs to train for
+#   batch_size (int): batch size for batch training
 def optimize_ode_params(rxn, online_training, initial_params, t_points, y_features, y_labels, initial_conditions, solver, stepsize_controller, dt0, max_steps, learning_rate=0.01, num_epochs=10, batch_size=32):
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(initial_params)
@@ -56,6 +89,7 @@ def optimize_ode_params(rxn, online_training, initial_params, t_points, y_featur
     print('training')
     for epoch in range(num_epochs):
         key = jax.random.PRNGKey(epoch)
+        #shuffle indices of training data 
         indices = jax.random.permutation(key, indices)
         
         epoch_loss = 0
@@ -74,14 +108,14 @@ def optimize_ode_params(rxn, online_training, initial_params, t_points, y_featur
                 
                 loss_fxn = lambda p: kld_loss(p, rxn, solver, stepsize_controller, dt0, max_steps, t_points, feature, label, initial_conditions) #cross_entropy_loss(p, rxn, t_points, feature, label, initial_conditions)
                 #grads_fde = scipy.optimize.approx_fprime(params, kld_loss, 1.4901161193847656e-08, rxn, solver, stepsize_controller, dt0, max_steps, t_points, feature, label, initial_conditions)
-                
+                #comptute loss and gradients using autodiff
                 loss_value, grads_autodiff = jax.value_and_grad(loss_fxn)(params)
                 
                 epoch_loss += loss_value.item()
                 
                 grads_in_epoch_autodiff.append(grads_autodiff.copy())
                 #grads_in_epoch_fde.append(grads_fde.copy())
-
+                #update parameters
                 updates, opt_state = optimizer.update(grads_autodiff, opt_state)
                 params = optax.apply_updates(params, updates)
                 params = jnp.maximum(params, 1e-5)  #no neg params
@@ -147,6 +181,11 @@ def save_data(all_data, filename):
 
 if __name__ == "__main__":
     #can make command line args 
+    n=6
+    m=n*(n-1)//2
+    seed=0
+    n_second_order=1
+    n_inputs=1
     batch_size = 32  
     online_training=True
     num_epochs =  6 #20 
@@ -172,7 +211,7 @@ if __name__ == "__main__":
     #rxn=rxn_net(net_type)
 
     
-    rxn=random_rxn_net(n, p, n_second_order, n_inputs, init_concentrations, True, A, second_order_edge_idxs, F_a_idxs)
+    rxn=random_rxn_net(n, m, seed, n_second_order, n_inputs)
 
     #optimize
     optimized_params, avg_epoch_losses, loss_history, grads_per_epoch_autodiff, optimized_params_history = optimize_ode_params(rxn, online_training, initial_params, t_points, train_features, train_labels, initial_conditions, solver, stepsize_controller, dt0, max_steps, learning_rate=0.01, num_epochs=num_epochs,batch_size=batch_size)

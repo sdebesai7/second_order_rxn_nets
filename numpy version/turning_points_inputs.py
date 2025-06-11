@@ -1,15 +1,11 @@
 #testing reaction network code
-import jax
-import jax.numpy as jnp
 import numpy as np
-from diffrax import diffeqsolve, ODETerm, Tsit5, SaveAt, Kvaerno3, PIDController
-import optax  
 import pickle as pkl
 #from reaction_nets import rxn_net
 from functools import partial
 import random
 #from modified_reaction_nets import random_rxn_net
-from reaction_nets import random_rxn_net
+from reaction_nets_numpy import random_rxn_net
 import scipy
 from scipy.signal import savgol_filter
 import gc
@@ -17,40 +13,15 @@ import os
 import sys
 import argparse
 #from memory_profiler import profile
-import jax.profiler
 
-os.environ['JAX_DEBUG_PRINT_ENABLED'] = '1'
-os.environ['JAX_LOG_LEVEL'] = 'DEBUG'
-
-# Function to generate concentration profile as a function of F_a for a single reaction network with given parameters 
-#inputs: 
-#   rxn (reaction_network object): reaction network)
-#   params (tuple): (E, B, F) where E is the energy vector, B is the bias vector, and F is the feature vector
-#   initial_conditions (jndarray(float64)): initial concentrations
-#   all_features (jndarray(float64)): array of F_a to evaluate
-#   solver (diffrax solver): solver to use for integration
-#   stepsize_controller (diffrax stepsize controller): stepsize controller to use for integration
-#   t_points (jndarray(float64)): time points to evaluate the solution at
-#   dt (float): initial time step size
-#   max_steps (int): maximum number of steps to take in the integration
-#outputs:
-# solns (jndarray(float64)): array of final concentrations for each F_a in all_features, shape (len(all_features), n_species)
 def profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps):
     E, B, F=params
     solns=[]
     for F_a in all_features:
         sol_F_a=rxn.integrate(solver=solver, stepsize_controller=stepsize_controller, t_points=t_points, dt0=dt, initial_conditions=initial_conditions, args=(E, B, F, F_a,), max_steps=max_steps) 
         solns.append(sol_F_a.ys[-1].copy())
-    return jnp.exp(jnp.array(solns))
+    return np.exp(np.array(solns))
 
-#Function to count the number of turning points in a concentration profile
-# inputs:
-#   data (jndarray(float64)): concentration profile
-#   window_length (int): length of the window for the Savitzky-Golay filter
-#   polyorder (int): order of the polynomial to fit in the Savitzky-Golay filter
-#   min_width (int): minimum width of peaks/troughs to consider
-#outputs:
-#   int: total number of turning points (peaks and troughs) in the profile
 def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
     if len(data) < window_length:
         window_length = max(min(len(data) - 2, 7), 3)
@@ -105,25 +76,6 @@ def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
 
     return total_finite, prominence_peaks, prominence_troughs, width_peaks, width_troughs
 
-# Function to generate concentration profiles and count turning points for multiple reaction networks
-#inputs:
-#   fname (str): path to the file containing random parameters for reaction networks
-#   n (int): number of species in the reaction network
-#   m (int): number of reactions in the reaction networkm
-#   seeds (jndarray(int)): array of seeds for random number generation
-#   n_second_order (int): number of second-order reactions
-#   n_inputs (int): number of inputs to the reaction network
-#   second_order_edge_idxs (jndarray(int)): indices of second-order reactions
-#   initial_conditions (jndarray(float64)): initial concentrations of species
-#   all_features (jndarray(float64)): array of F_a to evaluate
-#   solver (diffrax solver): solver to use for integration
-#   stepsize_controller (diffrax stepsize controller): stepsize controller to use for integration
-#   t_points (jndarray(float64)): time points to evaluate the solution at
-#   dt (float): initial time step size
-#   max_steps (int): maximum number of steps to take in the integration
-#outputs:
-#   dist_tps (jndarray(int)): distribution of turning points across all profiles
-#   solns_all (jndarray(float64)): array of concentration profiles for each reaction network, shape (n_profiles, len(all_features), n_species)
 def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge_idxs, initial_conditions, all_features, solver, stepsize_controller, t_points, dt,max_steps, output_file, turning_points_file):
     with open(fname, "rb") as f:
         params_rand = pkl.load(f)
@@ -140,8 +92,7 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
             if i%50 == 0:
                 #jax.debug.print('seed {i}', i=int(seeds[i]))
                 print(f'seed {i}')
-                sys.stderr.flush()
-                sys.stdout.flush()
+        
             rxn=random_rxn_net(n, m, int(seeds[i]), n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=second_order_edge_idxs, F_a_idxs=None)
             solns=profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps)
             
@@ -161,11 +112,6 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
             tp_file.write(tp_line)
     print('integrated all profiles for this set of edges')
 
-    sys.stdout.flush()
-    sys.stderr.flush()
-    
-    #return dist_tps, solns_all
-
 def main():
 # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run turning points analysis with different parameters')
@@ -181,7 +127,7 @@ def main():
     try:
         import ast
         edges_list = ast.literal_eval(args.n_second_order_edges)
-        second_order_edges = jnp.array(edges_list)
+        second_order_edges = np.array(edges_list)
 
         # Calculate n_second_order from the edges (for compatibility)
         if len(edges_list) == 1 and edges_list[0] == [0, 0]:
@@ -198,16 +144,11 @@ def main():
     m = n * (n - 1) // 2
     seeds = np.arange(1, 4001)
     seeds = seeds.reshape(4, 1000)
-    initial_conditions = jnp.log(jnp.array([1/6, 1/6, 1/6, 1/6, 1/6, 1/6]))
-    all_features = jnp.linspace(-20, 20, 100)
-    t_points = jnp.linspace(0, 20, 200)
-    solver = Kvaerno3()
-    stepsize_controller = PIDController(
-        rtol=1e-6,
-        atol=1e-9,
-        dtmin=1e-11,
-        dtmax=1e-1
-    )
+    initial_conditions = np.log(np.array([1/6, 1/6, 1/6, 1/6, 1/6, 1/6]))
+    all_features = np.linspace(-20, 20, 100)
+    t_points = np.linspace(0, 20, 200)
+    solver = 'LSODA'
+
     dt = 0.1
 
     max_steps = 1000#0000
@@ -215,21 +156,16 @@ def main():
     n_inputs = 1
 
     params_file=f'data/turning_points/params_all_N0'
-    jax.debug.print('n_second_order: {x}', x=n_second_order)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    jax.debug.print('second order edges: {x}', x=second_order_edges)
-    sys.stdout.flush()
-    sys.stderr.flush()
+    print(f'n_second_order: {n_second_order}')
+    print('second order edges: {second_order_edges}')
     seed_set = seeds[min(args.task_id, len(seeds)-1)]
 
     suffix =f"task{args.task_id}"
     dist_filename = f'data/turning_points/N{n}_M{m}_S{n_second_order}_distributions_{suffix}.txt'
     profiles_filename = f'data/turning_points/N{n}_M{m}_S{n_second_order}_profiles_{suffix}.txt'
 
-    gen_profiles(params_file, n, m, seed_set, n_second_order, n_inputs, second_order_edges, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps, profiles_filename, dist_filename)
-    jax.profiler.save_device_memory_profile("memory.prof")
-    print('profiler done')
+    gen_profiles(params_file, n, m, seed_set, n_second_order, n_inputs, second_order_edges, initial_conditions, all_features, solver, t_points, dt, profiles_filename, dist_filename)
+
     # Save results
     #with open(dist_filename, 'wb') as f:
     #    pkl.dump(dist, f)

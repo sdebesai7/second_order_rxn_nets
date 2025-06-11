@@ -15,6 +15,19 @@ from rxn_nets_old import rxn_net
 import scipy
 from scipy.signal import savgol_filter
 
+# Function to generate concentration profile as a function of F_a for a single reaction network with given parameters 
+#inputs: 
+#   rxn (reaction_network object): reaction network)
+#   params (tuple): (E, B, F) where E is the energy vector, B is the bias vector, and F is the feature vector
+#   initial_conditions (jndarray(float64)): initial concentrations
+#   all_features (jndarray(float64)): array of F_a to evaluate
+#   solver (diffrax solver): solver to use for integration
+#   stepsize_controller (diffrax stepsize controller): stepsize controller to use for integration
+#   t_points (jndarray(float64)): time points to evaluate the solution at
+#   dt (float): initial time step size
+#   max_steps (int): maximum number of steps to take in the integration
+#outputs:
+# solns (jndarray(float64)): array of final concentrations for each F_a in all_features, shape (len(all_features), n_species)
 def profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps):
     E, B, F=params
     solns=[]
@@ -24,6 +37,14 @@ def profile(rxn, params, initial_conditions, all_features, solver, stepsize_cont
         #jax.debug.print('{x}', x=sol_F_a.result)
     return jnp.exp(jnp.array(solns))
 
+#Function to count the number of turning points in a concentration profile
+# inputs:
+#   data (jndarray(float64)): concentration profile
+#   window_length (int): length of the window for the Savitzky-Golay filter
+#   polyorder (int): order of the polynomial to fit in the Savitzky-Golay filter
+#   min_width (int): minimum width of peaks/troughs to consider
+#outputs:
+#   int: total number of turning points (peaks and troughs) in the profile
 def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
     
     if len(data) < window_length:
@@ -49,7 +70,27 @@ def count_turning_points(data,window_length=11, polyorder=2, min_width=5):
 
     return all_peaks.shape[0] + all_troughs.shape[0]
 
+# Function to generate concentration profiles and count turning points for multiple reaction networks
+#inputs:
+#   fname (str): path to the file containing random parameters for reaction networks
+#   n (int): number of species in the reaction network
+#   m (int): number of reactions in the reaction networkm
+#   seeds (jndarray(int)): array of seeds for random number generation
+#   n_second_order (int): number of second-order reactions
+#   n_inputs (int): number of inputs to the reaction network
+#   second_order_edge_idxs (jndarray(int)): indices of second-order reactions
+#   initial_conditions (jndarray(float64)): initial concentrations of species
+#   all_features (jndarray(float64)): array of F_a to evaluate
+#   solver (diffrax solver): solver to use for integration
+#   stepsize_controller (diffrax stepsize controller): stepsize controller to use for integration
+#   t_points (jndarray(float64)): time points to evaluate the solution at
+#   dt (float): initial time step size
+#   max_steps (int): maximum number of steps to take in the integration
+#outputs:
+#   dist_tps (jndarray(int)): distribution of turning points across all profiles
+#   solns_all (jndarray(float64)): array of concentration profiles for each reaction network, shape (n_profiles, len(all_features), n_species)
 def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge_idxs, initial_conditions, all_features, solver, stepsize_controller, t_points, dt,max_steps):
+    #read file with random params
     with open(fname, "rb") as f:
         params_rand = pkl.load(f)
     f.close()
@@ -62,11 +103,13 @@ def gen_profiles(fname, n, m, seeds, n_second_order, n_inputs, second_order_edge
         #gen reaction net
         #seed=int(seeds[i])
         jax.debug.print('seed {i}', i=int(seeds[i]))
-       
+
+        #generate reaction network with parameters and integrate to get profiles 
         rxn=random_rxn_net(n, m, int(seeds[i]), n_second_order, n_inputs, test=False, A=None, second_order_edge_idxs=second_order_edge_idxs, F_a_idxs=None)
         solns=profile(rxn, params, initial_conditions, all_features, solver, stepsize_controller, t_points, dt, max_steps)
         solns_all = solns_all.at[i].set(solns.copy())
 
+        #for each species profile, count the number of turning points and store in dist_tps
         for j, species_prof in enumerate(solns.T):
             n_tps=count_turning_points(species_prof)
             dist_tps=dist_tps.at[counter].set(n_tps)
